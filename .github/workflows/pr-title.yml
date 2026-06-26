@@ -4,6 +4,22 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
+# Allowed conventional commit types:
+#   feat      – new feature
+#   fix       – bug fix
+#   docs      – documentation only
+#   style     – formatting, whitespace (no logic change)
+#   refactor  – code restructure (not a feat or fix)
+#   perf      – performance improvement
+#   test      – adding or fixing tests
+#   build     – build system or dependency changes
+#   ci        – CI/CD changes
+#   chore     – maintenance tasks
+#   revert    – reverting a previous commit
+#
+# Format: type(optional-scope): description
+# Breaking change: append ! before the colon, e.g. feat!: remove old config format
+
 jobs:
   validate:
     name: Validate
