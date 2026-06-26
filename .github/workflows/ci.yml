@@ -23,8 +23,8 @@ jobs:
     name: Zizmor
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4      # check out the repository
-      - uses: zizmor-gh/zizmor@v1      # audit workflow files for security issues
+      - uses: actions/checkout@v4           # check out the repository
+      - uses: zizmorcore/zizmor-action@v1   # audit workflow files for security issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # used to fetch extra context from the GitHub API
 
