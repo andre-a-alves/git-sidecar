@@ -86,3 +86,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85  # install the minimum supported Rust version
       - uses: Swatinem/rust-cache@v2   # cache compiled dependencies between runs
       - run: cargo test --verbose      # verify tests pass on the MSRV
+
+  # Catch dependencies that are declared in Cargo.toml but never actually used.
+  unused-deps:
+    name: Unused Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4           # check out the repository
+      - uses: dtolnay/rust-toolchain@stable # install stable Rust
+      - uses: Swatinem/rust-cache@v2        # cache compiled dependencies between runs
+      - run: cargo install cargo-machete --locked  # install the unused-dependency detector
+      - run: cargo machete                         # fail if any declared dependency is unused
