@@ -1,6 +1,6 @@
 [package]
 name = "git-shadow"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 description = "Standalone shadow copies of git repos (or parts of them) in a working directory."
 license = "MIT OR Apache-2.0"
@@ -11,5 +11,5 @@ categories = ["command-line-utilities"]
 rust-version = "1.85"
 
 [[bin]]
-name = "gshad"
+name = "git-shad"
 path = "src/main.rs"
