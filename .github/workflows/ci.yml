@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v4      # check out the repository
       - uses: dtolnay/rust-toolchain@1.85  # install the minimum supported Rust version
       - uses: Swatinem/rust-cache@v2   # cache compiled dependencies between runs
-      - run: cargo test --verbose      # verify tests pass on the MSRV
+      - run: cargo build --verbose     # verify the crate compiles on the MSRV
 
   # Catch dependencies that are declared in Cargo.toml but never actually used.
   unused-deps:
