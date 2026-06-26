@@ -10,54 +10,60 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Catch typos early and cheaply before spending time on compilation.
   typos:
     name: Typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1
+      - uses: actions/checkout@v4  # check out the repository
+      - uses: crate-ci/typos@v1    # scan source and docs for common typos
 
+  # Detect security issues in the workflow files themselves (injection, over-permissive tokens, etc.).
   zizmor:
     name: Zizmor
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: zizmor-gh/zizmor@v1
+      - uses: actions/checkout@v4      # check out the repository
+      - uses: zizmor-gh/zizmor@v1      # audit workflow files for security issues
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # used to fetch extra context from the GitHub API
 
+  # Enforce consistent formatting and catch code quality issues.
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4           # check out the repository
+      - uses: dtolnay/rust-toolchain@stable # install stable Rust with rustfmt and clippy
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
+      - uses: Swatinem/rust-cache@v2        # cache compiled dependencies between runs
+      - run: cargo fmt --check              # fail if code is not formatted
+      - run: cargo clippy -- -D warnings    # fail on any clippy warning
 
+  # Ensure documentation builds without errors or broken intra-doc links.
   docs:
     name: Docs
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: -D warnings
+      RUSTDOCFLAGS: -D warnings  # treat doc warnings as errors
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps --document-private-items
+      - uses: actions/checkout@v4           # check out the repository
+      - uses: dtolnay/rust-toolchain@stable # install stable Rust
+      - uses: Swatinem/rust-cache@v2        # cache compiled dependencies between runs
+      - run: cargo doc --no-deps --document-private-items  # fail if docs don't build cleanly
 
+  # Catch newly-vulnerable dependencies introduced by this change.
   audit:
     name: Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@v4        # check out the repository
+      - uses: rustsec/audit-check@v2     # check dependencies against the RustSec advisory database
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}  # used to post findings as check annotations
 
+  # Verify the build and tests pass on all supported platforms.
   test:
     name: Test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -66,16 +72,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --verbose
+      - uses: actions/checkout@v4           # check out the repository
+      - uses: dtolnay/rust-toolchain@stable # install stable Rust
+      - uses: Swatinem/rust-cache@v2        # cache compiled dependencies between runs
+      - run: cargo test --verbose           # build and run tests
 
+  # Guard against accidentally using APIs newer than the declared minimum Rust version.
   msrv:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --verbose
+      - uses: actions/checkout@v4      # check out the repository
+      - uses: dtolnay/rust-toolchain@1.85  # install the minimum supported Rust version
+      - uses: Swatinem/rust-cache@v2   # cache compiled dependencies between runs
+      - run: cargo test --verbose      # verify tests pass on the MSRV

@@ -5,11 +5,12 @@ on:
     - cron: '0 7 * * *'  # 07:00 UTC daily
 
 jobs:
+  # Catch new advisories published against existing dependencies, even when no code has changed.
   audit:
     name: Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@v4        # check out the repository
+      - uses: rustsec/audit-check@v2     # check dependencies against the RustSec advisory database
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}  # used to post findings as check annotations
