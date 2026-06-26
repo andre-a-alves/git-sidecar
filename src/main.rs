@@ -1,5 +1,5 @@
 fn run() -> &'static str {
-    "git-shadow (gshad): placeholder — not yet implemented."
+    "git-shadow (git-shad): placeholder — not yet implemented."
 }
 
 fn main() {
@@ -12,6 +12,9 @@ mod tests {
 
     #[test]
     fn placeholder_message() {
-        assert_eq!(run(), "git-shadow (gshad): placeholder — not yet implemented.");
+        assert_eq!(
+            run(),
+            "git-shadow (git-shad): placeholder — not yet implemented."
+        );
     }
 }

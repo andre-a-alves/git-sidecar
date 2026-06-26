@@ -11,5 +11,5 @@ categories = ["command-line-utilities"]
 rust-version = "1.85"
 
 [[bin]]
-name = "gshad"
+name = "git-shad"
 path = "src/main.rs"
