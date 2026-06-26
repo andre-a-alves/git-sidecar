@@ -1,7 +1,7 @@
 name: PR Title
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, edited, synchronize, reopened]
 
 # Allowed conventional commit types:
@@ -25,7 +25,9 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
-      - uses: amannn/action-semantic-pull-request@v5  # enforce conventional commit format on the PR title
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825  # v5
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # required by the action to read PR metadata
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
