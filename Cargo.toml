@@ -12,7 +12,7 @@ rust-version = "1.85"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1"
 
 [[bin]]
 name = "git-shad"
