@@ -10,6 +10,10 @@ keywords = ["git", "cli", "vendor", "shadow"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
 [[bin]]
 name = "git-shad"
 path = "src/main.rs"
