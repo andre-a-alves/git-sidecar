@@ -1,5 +1,9 @@
 # git-shadow
 
+[![Crates.io](https://img.shields.io/crates/v/git-shadow.svg)](https://crates.io/crates/git-shadow)
+[![CI](https://github.com/andre-a-alves/git-shadow/actions/workflows/ci.yml/badge.svg)](https://github.com/andre-a-alves/git-shadow/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/andre-a-alves/git-shadow#license)
+
 Run git commands against shadow repositories that live inside your working directory.
 
 A shadow repo is a separate git repository checked out inside another project — useful for keeping vendored code, generated outputs, or loosely related projects alongside your main repo without making them submodules.
