@@ -4,17 +4,23 @@ use std::process;
 
 use serde::Deserialize;
 
+/// Parsed representation of a `.gitshadow.toml` file.
 #[derive(Deserialize)]
 struct Config {
     shadows: Vec<Shadow>,
 }
 
+/// A single shadow entry from `.gitshadow.toml`.
 #[derive(Deserialize)]
 struct Shadow {
+    /// The alias used on the command line (`git shad <name> ...`).
     name: String,
+    /// Path to the shadow git repository, relative to `.gitshadow.toml`.
     mapping: String,
 }
 
+/// Walks up the directory tree from `start`, returning the path to the first
+/// `.gitshadow.toml` found, or `None` if the filesystem root is reached.
 fn find_config(start: &Path) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
@@ -28,6 +34,9 @@ fn find_config(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Entry point. Parses CLI arguments, locates `.gitshadow.toml`, resolves the
+/// named shadow, and delegates to `git` running inside the shadow directory.
+/// Exits with git's own exit code, or 1 on any configuration error.
 fn main() {
     let args: Vec<String> = env::args().collect();
 
