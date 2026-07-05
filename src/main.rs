@@ -317,7 +317,7 @@ fn parse_config(content: &str) -> Result<Config, String> {
         if shadow.mapping.trim().is_empty() {
             return Err(format!("shadow '{nickname}' has an empty mapping"));
         }
-        if Path::new(&shadow.mapping).is_absolute() {
+        if !is_portable_relative_path(&shadow.mapping) {
             return Err(format!("shadow '{nickname}' mapping must be relative"));
         }
     }
@@ -325,6 +325,22 @@ fn parse_config(content: &str) -> Result<Config, String> {
     Ok(Config {
         shadows: raw.shadows,
     })
+}
+
+fn is_portable_relative_path(path: &str) -> bool {
+    if Path::new(path).is_absolute() {
+        return false;
+    }
+
+    let bytes = path.as_bytes();
+    if matches!(bytes.first(), Some(b'/' | b'\\')) {
+        return false;
+    }
+
+    !matches!(
+        bytes,
+        [drive, b':', ..] if drive.is_ascii_alphabetic()
+    )
 }
 
 #[cfg(test)]
@@ -411,6 +427,22 @@ version = 1
 [shadows.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = "/tmp/cardlet"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("shadow 'cardlet' mapping must be relative"));
+    }
+
+    #[test]
+    fn windows_absolute_shadow_mapping_is_an_error() {
+        let err = parse_config(
+            r#"
+version = 1
+
+[shadows.cardlet]
+repo = "git@github.com:andre-a-alves/cardlet.git"
+mapping = "C:\\tmp\\cardlet"
 "#,
         )
         .unwrap_err();
