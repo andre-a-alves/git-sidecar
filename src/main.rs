@@ -9,6 +9,8 @@ const CONFIG_DIR_NAME: &str = "git-shadow";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_VERSION: u32 = 1;
 const RESERVED_NICKNAMES: [&str; 3] = ["list", "sync", "clone"];
+const EXCLUDE_SECTION_START: &str = "# >>> git-shadow (managed) >>>";
+const EXCLUDE_SECTION_END: &str = "# <<< git-shadow (managed) <<<";
 
 /// Parsed representation of a v1 git-shadow config file.
 #[derive(Debug, Deserialize)]
@@ -269,15 +271,39 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
     }
 
     let mut all_ok = true;
+    let mut present_mappings: Vec<&str> = Vec::new();
     for (name, shadow) in selected {
-        if !sync_shadow(name, shadow, &parent_repo) {
+        let outcome = sync_shadow(name, shadow, &parent_repo);
+        if !outcome.ok {
+            all_ok = false;
+        }
+        if outcome.present {
+            present_mappings.push(&shadow.mapping);
+        }
+    }
+
+    match ensure_mappings_excluded(&parent_repo, &present_mappings) {
+        Ok(Some(exclude_path)) => {
+            println!("updated exclude entries in {}", exclude_path.display());
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("git-shadow: warning: failed to update git exclude: {e}");
             all_ok = false;
         }
     }
+
     Ok(all_ok)
 }
 
-fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> bool {
+/// Result of processing one shadow during sync: whether it completed
+/// cleanly, and whether a git repository now exists at its mapping.
+struct SyncOutcome {
+    ok: bool,
+    present: bool,
+}
+
+fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
     let shadow_dir = parent_repo.join(&shadow.mapping);
 
     match sync_action(&shadow_dir) {
@@ -288,14 +314,23 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> bool {
                 .arg(&shadow_dir)
                 .status();
             match status {
-                Ok(status) if status.success() => true,
+                Ok(status) if status.success() => SyncOutcome {
+                    ok: true,
+                    present: true,
+                },
                 Ok(_) => {
                     eprintln!("git-shadow: {name}: git clone failed");
-                    false
+                    SyncOutcome {
+                        ok: false,
+                        present: false,
+                    }
                 }
                 Err(e) => {
                     eprintln!("git-shadow: {name}: failed to run git clone: {e}");
-                    false
+                    SyncOutcome {
+                        ok: false,
+                        present: false,
+                    }
                 }
             }
         }
@@ -305,18 +340,27 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> bool {
                     "git-shadow: warning: {name}: origin is {actual}, config says {}",
                     shadow.repo
                 );
-                false
+                SyncOutcome {
+                    ok: false,
+                    present: true,
+                }
             }
             Ok(_) => {
                 println!("{name}: already present");
-                true
+                SyncOutcome {
+                    ok: true,
+                    present: true,
+                }
             }
             Err(_) => {
                 eprintln!(
                     "git-shadow: warning: {name}: existing repo in {} has no readable origin",
                     shadow.mapping
                 );
-                false
+                SyncOutcome {
+                    ok: false,
+                    present: true,
+                }
             }
         },
         SyncAction::NotARepo => {
@@ -324,16 +368,153 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> bool {
                 "git-shadow: warning: {name}: mapping '{}' exists but is not a git repository; skipping",
                 shadow.mapping
             );
-            false
+            SyncOutcome {
+                ok: false,
+                present: false,
+            }
         }
         SyncAction::NotADirectory => {
             eprintln!(
                 "git-shadow: warning: {name}: mapping '{}' exists but is not a directory; skipping",
                 shadow.mapping
             );
-            false
+            SyncOutcome {
+                ok: false,
+                present: false,
+            }
         }
     }
+}
+
+/// Ensures the git-shadow managed section of the parent repo's
+/// `.git/info/exclude` contains an entry for every given mapping.
+/// Returns the exclude file's path when it was actually rewritten.
+fn ensure_mappings_excluded(
+    parent_repo: &Path,
+    mappings: &[&str],
+) -> Result<Option<PathBuf>, String> {
+    if mappings.is_empty() {
+        return Ok(None);
+    }
+
+    let entries: Vec<String> = mappings.iter().map(|m| exclude_entry(m)).collect();
+    let exclude_path = git_exclude_path(parent_repo)?;
+
+    let content = if exclude_path.exists() {
+        std::fs::read_to_string(&exclude_path)
+            .map_err(|e| format!("failed to read {}: {e}", exclude_path.display()))?
+    } else {
+        String::new()
+    };
+
+    let (new_content, changed) = with_excluded_entries(&content, &entries);
+    if !changed {
+        return Ok(None);
+    }
+
+    if let Some(info_dir) = exclude_path.parent() {
+        std::fs::create_dir_all(info_dir)
+            .map_err(|e| format!("failed to create {}: {e}", info_dir.display()))?;
+    }
+    std::fs::write(&exclude_path, new_content)
+        .map_err(|e| format!("failed to write {}: {e}", exclude_path.display()))?;
+
+    Ok(Some(exclude_path))
+}
+
+/// The exclude pattern for a mapping: root-anchored and directory-only.
+fn exclude_entry(mapping: &str) -> String {
+    format!("/{}/", mapping.trim_matches('/'))
+}
+
+/// Adds any missing entries to the git-shadow managed section of an
+/// exclude file's content, creating the section if needed. Lines outside
+/// the section are never touched. Returns the new content and whether it
+/// differs from the input.
+fn with_excluded_entries(content: &str, entries: &[String]) -> (String, bool) {
+    if entries.is_empty() {
+        return (content.to_string(), false);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == EXCLUDE_SECTION_START);
+    let end = start.and_then(|start| {
+        lines[start + 1..]
+            .iter()
+            .position(|line| line.trim() == EXCLUDE_SECTION_END)
+            .map(|offset| start + 1 + offset)
+    });
+
+    if let (Some(start), Some(end)) = (start, end) {
+        let missing: Vec<String> = entries
+            .iter()
+            .filter(|entry| {
+                !lines[start + 1..end]
+                    .iter()
+                    .any(|line| line.trim() == entry.as_str())
+            })
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return (content.to_string(), false);
+        }
+
+        let mut out_lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+        out_lines.splice(end..end, missing);
+        let mut out = out_lines.join("\n");
+        out.push('\n');
+        return (out, true);
+    }
+
+    // No complete managed section yet: append a fresh one.
+    let mut out = content.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(EXCLUDE_SECTION_START);
+    out.push('\n');
+    for entry in entries {
+        out.push_str(entry);
+        out.push('\n');
+    }
+    out.push_str(EXCLUDE_SECTION_END);
+    out.push('\n');
+    (out, true)
+}
+
+/// Path of the parent repo's exclude file, honoring worktrees and
+/// relocated git directories via `git rev-parse --git-common-dir`.
+fn git_exclude_path(repo: &Path) -> Result<PathBuf, String> {
+    let output = process::Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| format!("failed to locate git directory for {}: {e}", repo.display()))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "failed to locate git directory for {}",
+            repo.display()
+        ));
+    }
+
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if git_dir.is_empty() {
+        return Err(format!(
+            "git did not report a git directory for {}",
+            repo.display()
+        ));
+    }
+
+    let git_dir = PathBuf::from(git_dir);
+    let git_dir = if git_dir.is_absolute() {
+        git_dir
+    } else {
+        repo.join(git_dir)
+    };
+    Ok(git_dir.join("info").join("exclude"))
 }
 
 #[derive(Debug, PartialEq)]
@@ -537,6 +718,22 @@ fn clone_shadow(args: CloneArgs) -> Result<(), String> {
         "registered shadow '{nickname}' with mapping '{mapping}' in {}",
         config_path.display()
     );
+
+    match ensure_mappings_excluded(&parent_repo, &[&mapping]) {
+        Ok(Some(exclude_path)) => {
+            println!(
+                "added '{}' to {}",
+                exclude_entry(&mapping),
+                exclude_path.display()
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return Err(format!(
+                "shadow was cloned and registered, but updating git exclude failed: {e}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1398,6 +1595,76 @@ mapping = ".vendor/clone/"
         let config = parse_config(&content).unwrap();
         let shadow = config.shadows.get("has spaces").unwrap();
         assert_eq!(shadow.repo, "url\"with\"quotes");
+    }
+
+    #[test]
+    fn exclude_entries_are_root_anchored_directories() {
+        assert_eq!(exclude_entry("foobar/"), "/foobar/");
+        assert_eq!(exclude_entry("sub/vendor/fb/"), "/sub/vendor/fb/");
+        assert_eq!(exclude_entry(".test"), "/.test/");
+    }
+
+    #[test]
+    fn creates_managed_section_in_empty_exclude() {
+        let (out, changed) = with_excluded_entries("", &["/foobar/".to_string()]);
+
+        assert!(changed);
+        assert_eq!(
+            out,
+            "# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n"
+        );
+    }
+
+    #[test]
+    fn appends_managed_section_after_existing_rules() {
+        let (out, changed) = with_excluded_entries("*.log\nbuild/\n", &["/foobar/".to_string()]);
+
+        assert!(changed);
+        assert_eq!(
+            out,
+            "*.log\nbuild/\n\n# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n"
+        );
+    }
+
+    #[test]
+    fn adds_missing_entry_to_existing_managed_section() {
+        let existing =
+            "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n";
+        let (out, changed) =
+            with_excluded_entries(existing, &["/foobar/".to_string(), "/fb/".to_string()]);
+
+        assert!(changed);
+        assert_eq!(
+            out,
+            "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n/fb/\n# <<< git-shadow (managed) <<<\n"
+        );
+    }
+
+    #[test]
+    fn present_entries_leave_exclude_unchanged() {
+        let existing = "# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n";
+        let (out, changed) = with_excluded_entries(existing, &["/foobar/".to_string()]);
+
+        assert!(!changed);
+        assert_eq!(out, existing);
+    }
+
+    #[test]
+    fn lines_outside_managed_section_are_ignored_for_matching() {
+        // an identical rule outside the section doesn't count as managed
+        let existing = "/foobar/\n";
+        let (out, changed) = with_excluded_entries(existing, &["/foobar/".to_string()]);
+
+        assert!(changed);
+        assert!(out.starts_with("/foobar/\n\n# >>> git-shadow (managed) >>>\n"));
+    }
+
+    #[test]
+    fn no_entries_never_changes_exclude() {
+        let (out, changed) = with_excluded_entries("*.log\n", &[]);
+
+        assert!(!changed);
+        assert_eq!(out, "*.log\n");
     }
 
     #[test]

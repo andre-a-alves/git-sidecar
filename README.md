@@ -96,6 +96,8 @@ git shadow sync [<shadow-name>]
 
 Shadows that are already cloned are left untouched, but their `remote.origin.url` is checked against the configured `repo` — a mismatch prints a warning. If a mapping directory exists and is non-empty but isn't a git repository, it is skipped with a warning. Any warning or failed clone makes the command exit non-zero.
 
+`sync` also makes sure every present shadow is listed in the parent repo's exclude file (see below), so shadow directories never show up in the parent's `git status`.
+
 ### Cloning a new shadow
 
 ```
@@ -114,7 +116,22 @@ git shadow clone git@github.com:example/foobar.git .vendor/fb --name fb
 
 The directory is resolved relative to where you run the command (like `git clone`), and the stored `mapping` is computed relative to the parent repo root. If the nickname or mapping is already taken, or the target directory is non-empty, the command refuses and changes nothing. Existing config file content is preserved — the new entry is appended.
 
+`clone` also adds the new directory to the parent repo's exclude file.
+
 Because `list`, `sync`, and `clone` are subcommands, they are reserved and cannot be used as shadow nicknames.
+
+### The exclude file
+
+`clone` and `sync` keep shadow directories out of the parent repo's `git status` by adding them to `.git/info/exclude` (the local, uncommitted counterpart to `.gitignore`). Entries live in a managed block, and anything outside it is never touched:
+
+```
+# >>> git-shadow (managed) >>>
+/foobar/
+/.vendor/dep2/
+# <<< git-shadow (managed) <<<
+```
+
+Entries are only added, never removed — if you delete a shadow from the config, remove its line from the block yourself.
 
 ## License
 
