@@ -97,19 +97,22 @@ fn remote_path(host: &str, repo_path: &str) -> Option<PathBuf> {
 
 /// Compares two remote URLs by their normalized host/owner/repo path, so the
 /// same repository reached over SSH and HTTPS still matches. Falls back to a
-/// literal comparison when either URL cannot be normalized.
+/// separator-insensitive literal comparison when either URL cannot be
+/// normalized (e.g. local paths, which git may store with either slash
+/// direction on Windows).
 pub fn same_remote(a: &str, b: &str) -> bool {
     match (normalize_remote_url(a), normalize_remote_url(b)) {
         (Ok(a), Ok(b)) => a == b,
-        _ => a.trim() == b.trim(),
+        _ => a.trim().replace('\\', "/") == b.trim().replace('\\', "/"),
     }
 }
 
 /// Derives a repository name from a remote URL or local path: the last
-/// path segment with any trailing `.git` removed.
+/// path segment with any trailing `.git` removed. Backslashes count as
+/// separators so Windows local paths work.
 pub fn repo_name_from_url(url: &str) -> Result<String, String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let last = trimmed.rsplit(['/', ':']).next().unwrap_or_default();
+    let trimmed = url.trim().trim_end_matches(['/', '\\']);
+    let last = trimmed.rsplit(['/', ':', '\\']).next().unwrap_or_default();
     let name = last.strip_suffix(".git").unwrap_or(last);
 
     if name.is_empty() || name == "." || name == ".." {
@@ -183,6 +186,12 @@ mod tests {
     }
 
     #[test]
+    fn same_remote_ignores_separator_direction_for_local_paths() {
+        assert!(same_remote(r"C:\srv\git\repo.git", "C:/srv/git/repo.git"));
+        assert!(!same_remote(r"C:\srv\git\repo.git", "C:/srv/git/other.git"));
+    }
+
+    #[test]
     fn derives_repo_name_from_urls() {
         for (url, expected) in [
             ("git@github.com:example/foobar.git", "foobar"),
@@ -190,6 +199,8 @@ mod tests {
             ("https://github.com/example/foobar", "foobar"),
             ("https://github.com/example/foobar/", "foobar"),
             ("/srv/git/foobar.git", "foobar"),
+            (r"C:\srv\git\foobar.git", "foobar"),
+            (r"C:\srv\git\foobar\", "foobar"),
         ] {
             assert_eq!(repo_name_from_url(url).unwrap(), expected, "url: {url}");
         }
