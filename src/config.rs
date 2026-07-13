@@ -46,10 +46,17 @@ pub struct RepoContext {
 
 impl RepoContext {
     /// Resolves the context from the current working directory.
+    ///
+    /// Both paths are canonicalized so they can be compared lexically:
+    /// on Windows the working directory may come back in DOS 8.3 short
+    /// form (`RUNNER~1`) while git reports the long form, which would
+    /// otherwise make `strip_prefix`-based checks fail.
     pub fn discover() -> Result<Self, String> {
         let cwd =
             env::current_dir().map_err(|e| format!("failed to get current directory: {e}"))?;
+        let cwd = dunce::canonicalize(&cwd).unwrap_or(cwd);
         let parent_repo = nearest_git_repo(&cwd)?;
+        let parent_repo = dunce::canonicalize(&parent_repo).unwrap_or(parent_repo);
         let origin_url = remote_origin_url(&parent_repo)?;
         let config_path = config_path_for_origin(&origin_url)?;
         Ok(RepoContext {
