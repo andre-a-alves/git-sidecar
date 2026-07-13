@@ -52,7 +52,7 @@ mapping = ".vendor/foobar/"
 - **`repo`** — the remote URL for the shadow repository
 - **`mapping`** — path to the directory containing the shadow git repository, relative to the parent repo root
 
-You can define as many `[shadows.<nickname>]` entries as you need.
+You can define as many `[shadows.<nickname>]` entries as you need. You don't have to write this file by hand — `git shadow clone` creates and extends it for you.
 
 ## Usage
 
@@ -96,7 +96,25 @@ git shadow sync [<shadow-name>]
 
 Shadows that are already cloned are left untouched, but their `remote.origin.url` is checked against the configured `repo` — a mismatch prints a warning. If a mapping directory exists and is non-empty but isn't a git repository, it is skipped with a warning. Any warning or failed clone makes the command exit non-zero.
 
-Because `list` and `sync` are subcommands, they are reserved and cannot be used as shadow nicknames.
+### Cloning a new shadow
+
+```
+git shadow clone <repo-url> [<directory>] [--name <nickname>]
+```
+
+`git shadow clone` clones a repo into the parent repository and registers it as a shadow — creating the config file if it doesn't exist yet. The nickname and directory both default to the repository name from the URL:
+
+```
+# Clones into ./foobar, registers as [shadows.foobar]
+git shadow clone git@github.com:example/foobar.git
+
+# Clones into .vendor/fb, registers as [shadows.fb]
+git shadow clone git@github.com:example/foobar.git .vendor/fb --name fb
+```
+
+The directory is resolved relative to where you run the command (like `git clone`), and the stored `mapping` is computed relative to the parent repo root. If the nickname or mapping is already taken, or the target directory is non-empty, the command refuses and changes nothing. Existing config file content is preserved — the new entry is appended.
+
+Because `list`, `sync`, and `clone` are subcommands, they are reserved and cannot be used as shadow nicknames.
 
 ## License
 

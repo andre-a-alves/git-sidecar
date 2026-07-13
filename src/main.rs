@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process;
 
 use serde::Deserialize;
@@ -8,7 +8,7 @@ use serde::Deserialize;
 const CONFIG_DIR_NAME: &str = "git-shadow";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_VERSION: u32 = 1;
-const RESERVED_NICKNAMES: [&str; 2] = ["list", "sync"];
+const RESERVED_NICKNAMES: [&str; 3] = ["list", "sync", "clone"];
 
 /// Parsed representation of a v1 git-shadow config file.
 #[derive(Debug, Deserialize)]
@@ -42,10 +42,15 @@ fn main() {
         run_sync(&args[2..]);
     }
 
+    if args.len() >= 2 && args[1] == "clone" {
+        run_clone(&args[2..]);
+    }
+
     if args.len() < 3 {
         eprintln!("usage: git shadow <shadow-name> <git-command> [args...]");
         eprintln!("       git shadow list [--global]");
         eprintln!("       git shadow sync [<shadow-name>]");
+        eprintln!("       git shadow clone <repo-url> [<directory>] [--name <nickname>]");
         process::exit(1);
     }
 
@@ -372,6 +377,261 @@ fn same_remote(a: &str, b: &str) -> bool {
     match (normalize_remote_url(a), normalize_remote_url(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a.trim() == b.trim(),
+    }
+}
+
+fn run_clone(args: &[String]) -> ! {
+    let parsed = parse_clone_args(args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        process::exit(1);
+    });
+
+    if let Err(e) = clone_shadow(parsed) {
+        eprintln!("git-shadow: {e}");
+        process::exit(1);
+    }
+    process::exit(0);
+}
+
+#[derive(Debug)]
+struct CloneArgs {
+    repo: String,
+    dir: Option<String>,
+    name: Option<String>,
+}
+
+fn parse_clone_args(args: &[String]) -> Result<CloneArgs, String> {
+    const USAGE: &str = "usage: git shadow clone <repo-url> [<directory>] [--name <nickname>]";
+
+    let mut repo = None;
+    let mut dir = None;
+    let mut name: Option<String> = None;
+
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if let Some(value) = arg.strip_prefix("--name=") {
+            if name.is_some() {
+                return Err(USAGE.to_string());
+            }
+            name = Some(value.to_string());
+        } else if arg == "--name" {
+            if name.is_some() {
+                return Err(USAGE.to_string());
+            }
+            name = Some(iter.next().ok_or_else(|| USAGE.to_string())?.clone());
+        } else if arg.starts_with('-') {
+            return Err(USAGE.to_string());
+        } else if repo.is_none() {
+            repo = Some(arg.clone());
+        } else if dir.is_none() {
+            dir = Some(arg.clone());
+        } else {
+            return Err(USAGE.to_string());
+        }
+    }
+
+    if matches!(&name, Some(n) if n.trim().is_empty()) {
+        return Err(USAGE.to_string());
+    }
+
+    Ok(CloneArgs {
+        repo: repo.ok_or_else(|| USAGE.to_string())?,
+        dir,
+        name,
+    })
+}
+
+/// Clones a new shadow repo and registers it in the parent repo's config,
+/// creating the config file if it does not exist yet. Refuses to touch
+/// anything on nickname/mapping conflicts or a non-empty target directory.
+fn clone_shadow(args: CloneArgs) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|e| format!("failed to get current directory: {e}"))?;
+    let parent_repo = nearest_git_repo(&cwd)?;
+    let origin_url = remote_origin_url(&parent_repo)?;
+    let config_path = config_path_for_origin(&origin_url)?;
+
+    let nickname = match args.name {
+        Some(name) => name,
+        None => repo_name_from_url(&args.repo)?,
+    };
+    if RESERVED_NICKNAMES.contains(&nickname.as_str()) {
+        return Err(format!("shadow nickname '{nickname}' is reserved"));
+    }
+
+    let dir = match args.dir {
+        Some(dir) => dir,
+        None => repo_name_from_url(&args.repo)?,
+    };
+    let target = cwd.join(&dir);
+    let mapping = relative_mapping(&parent_repo, &target)?;
+
+    let existing = if config_path.exists() {
+        Some(
+            std::fs::read_to_string(&config_path)
+                .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?,
+        )
+    } else {
+        None
+    };
+
+    if let Some(content) = &existing {
+        let config = parse_config(content)
+            .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;
+
+        if config.shadows.contains_key(&nickname) {
+            return Err(format!(
+                "shadow '{nickname}' already exists in {}",
+                config_path.display()
+            ));
+        }
+        for (other, shadow) in &config.shadows {
+            if shadow.mapping.trim_end_matches('/') == mapping.trim_end_matches('/') {
+                return Err(format!(
+                    "mapping '{mapping}' is already used by shadow '{other}'"
+                ));
+            }
+        }
+    }
+
+    match sync_action(&target) {
+        SyncAction::Clone => {}
+        SyncAction::AlreadyPresent => {
+            return Err(format!(
+                "{} already contains a git repository",
+                target.display()
+            ));
+        }
+        SyncAction::NotARepo => {
+            return Err(format!("{} exists and is not empty", target.display()));
+        }
+        SyncAction::NotADirectory => {
+            return Err(format!(
+                "{} exists and is not a directory",
+                target.display()
+            ));
+        }
+    }
+
+    let snippet = shadow_config_snippet(&nickname, &args.repo, &mapping);
+    let new_content = config_with_shadow(existing.as_deref(), &snippet);
+    parse_config(&new_content).map_err(|e| format!("refusing to write an invalid config: {e}"))?;
+
+    println!("{nickname}: cloning {} into {mapping}", args.repo);
+    let status = process::Command::new("git")
+        .args(["clone", &args.repo])
+        .arg(&target)
+        .status()
+        .map_err(|e| format!("failed to run git clone: {e}"))?;
+    if !status.success() {
+        return Err("git clone failed".to_string());
+    }
+
+    if let Some(config_dir) = config_path.parent() {
+        std::fs::create_dir_all(config_dir)
+            .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
+    }
+    std::fs::write(&config_path, new_content)
+        .map_err(|e| format!("failed to write {}: {e}", config_path.display()))?;
+
+    println!(
+        "registered shadow '{nickname}' with mapping '{mapping}' in {}",
+        config_path.display()
+    );
+    Ok(())
+}
+
+/// Derives a repository name from a remote URL or local path: the last
+/// path segment with any trailing `.git` removed.
+fn repo_name_from_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let last = trimmed.rsplit(['/', ':']).next().unwrap_or_default();
+    let name = last.strip_suffix(".git").unwrap_or(last);
+
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(format!("cannot derive a repository name from '{url}'"));
+    }
+    Ok(name.to_string())
+}
+
+/// Resolves `target` against the parent repo root and returns the config
+/// `mapping` string: forward-slash separated, relative, with a trailing `/`.
+fn relative_mapping(parent_repo: &Path, target: &Path) -> Result<String, String> {
+    let parent = normalize_lexically(parent_repo);
+    let target = normalize_lexically(target);
+
+    let rel = target.strip_prefix(&parent).map_err(|_| {
+        format!(
+            "target directory {} is outside the parent repository {}",
+            target.display(),
+            parent.display()
+        )
+    })?;
+
+    if rel.as_os_str().is_empty() {
+        return Err("target directory is the parent repository root".to_string());
+    }
+
+    let parts: Vec<String> = rel
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    Ok(format!("{}/", parts.join("/")))
+}
+
+/// Resolves `.` and `..` components without touching the filesystem, so
+/// paths that do not exist yet can still be compared.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn shadow_config_snippet(name: &str, repo: &str, mapping: &str) -> String {
+    format!(
+        "[shadows.{}]\nrepo = {}\nmapping = {}\n",
+        toml_key(name),
+        toml_string(repo),
+        toml_string(mapping)
+    )
+}
+
+/// Appends a shadow snippet to an existing config's text (preserving
+/// whatever formatting it has), or starts a fresh v1 config.
+fn config_with_shadow(existing: Option<&str>, snippet: &str) -> String {
+    match existing {
+        Some(content) => {
+            let mut out = content.trim_end().to_string();
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(snippet);
+            out
+        }
+        None => format!("version = {CONFIG_VERSION}\n\n{snippet}"),
+    }
+}
+
+fn toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
+}
+
+fn toml_key(key: &str) -> String {
+    let bare = !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if bare {
+        key.to_string()
+    } else {
+        toml_string(key)
     }
 }
 
@@ -990,6 +1250,154 @@ mapping = ".vendor/sync/"
         std::fs::write(&file, "").unwrap();
 
         assert_eq!(sync_action(&file), SyncAction::NotADirectory);
+    }
+
+    #[test]
+    fn reserved_clone_nickname_is_an_error() {
+        let err = parse_config(
+            r#"
+version = 1
+
+[shadows.clone]
+repo = "git@github.com:example/clone.git"
+mapping = ".vendor/clone/"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("shadow nickname 'clone' is reserved"));
+    }
+
+    #[test]
+    fn clone_args_require_a_repo_url() {
+        let err = parse_clone_args(&[]).unwrap_err();
+        assert!(err.contains("usage: git shadow clone"));
+    }
+
+    #[test]
+    fn clone_args_accept_url_directory_and_name() {
+        let args = parse_clone_args(&[
+            "git@github.com:example/foobar.git".to_string(),
+            ".vendor/fb".to_string(),
+            "--name".to_string(),
+            "fb".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(args.repo, "git@github.com:example/foobar.git");
+        assert_eq!(args.dir.as_deref(), Some(".vendor/fb"));
+        assert_eq!(args.name.as_deref(), Some("fb"));
+    }
+
+    #[test]
+    fn clone_args_accept_name_with_equals() {
+        let args = parse_clone_args(&[
+            "git@github.com:example/foobar.git".to_string(),
+            "--name=fb".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(args.name.as_deref(), Some("fb"));
+        assert_eq!(args.dir, None);
+    }
+
+    #[test]
+    fn clone_args_reject_unknown_flags_extra_args_and_dangling_name() {
+        for args in [
+            vec!["url".to_string(), "--force".to_string()],
+            vec!["url".to_string(), "dir".to_string(), "extra".to_string()],
+            vec!["url".to_string(), "--name".to_string()],
+            vec!["url".to_string(), "--name=".to_string()],
+        ] {
+            let err = parse_clone_args(&args).unwrap_err();
+            assert!(err.contains("usage: git shadow clone"), "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn derives_repo_name_from_urls() {
+        for (url, expected) in [
+            ("git@github.com:example/foobar.git", "foobar"),
+            ("https://github.com/example/foobar.git", "foobar"),
+            ("https://github.com/example/foobar", "foobar"),
+            ("https://github.com/example/foobar/", "foobar"),
+            ("/srv/git/foobar.git", "foobar"),
+        ] {
+            assert_eq!(repo_name_from_url(url).unwrap(), expected, "url: {url}");
+        }
+    }
+
+    #[test]
+    fn repo_name_derivation_fails_on_empty_result() {
+        assert!(repo_name_from_url("git@github.com:").is_err());
+        assert!(repo_name_from_url("/").is_err());
+    }
+
+    #[test]
+    fn computes_mapping_relative_to_parent_repo() {
+        let parent = Path::new("/home/user/project");
+
+        assert_eq!(
+            relative_mapping(parent, Path::new("/home/user/project/foobar")).unwrap(),
+            "foobar/"
+        );
+        assert_eq!(
+            relative_mapping(parent, Path::new("/home/user/project/sub/./x/../fb")).unwrap(),
+            "sub/fb/"
+        );
+    }
+
+    #[test]
+    fn mapping_outside_parent_repo_is_an_error() {
+        let parent = Path::new("/home/user/project");
+
+        let err = relative_mapping(parent, Path::new("/home/user/elsewhere")).unwrap_err();
+        assert!(err.contains("outside the parent repository"));
+
+        let err = relative_mapping(parent, Path::new("/home/user/project/sub/../..")).unwrap_err();
+        assert!(err.contains("outside the parent repository"));
+    }
+
+    #[test]
+    fn mapping_at_parent_repo_root_is_an_error() {
+        let parent = Path::new("/home/user/project");
+
+        let err = relative_mapping(parent, Path::new("/home/user/project")).unwrap_err();
+        assert!(err.contains("parent repository root"));
+    }
+
+    #[test]
+    fn new_config_with_shadow_parses() {
+        let snippet =
+            shadow_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let content = config_with_shadow(None, &snippet);
+
+        let config = parse_config(&content).unwrap();
+        let shadow = config.shadows.get("foobar").unwrap();
+        assert_eq!(shadow.repo, "git@github.com:example/foobar.git");
+        assert_eq!(shadow.mapping, "foobar/");
+    }
+
+    #[test]
+    fn appended_config_keeps_existing_shadows() {
+        let snippet =
+            shadow_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let content = config_with_shadow(Some(EXAMPLE_TOML), &snippet);
+
+        let config = parse_config(&content).unwrap();
+        assert_eq!(config.shadows.len(), 2);
+        assert!(config.shadows.contains_key("cardlet"));
+        assert!(config.shadows.contains_key("foobar"));
+    }
+
+    #[test]
+    fn config_snippet_escapes_special_characters() {
+        let snippet = shadow_config_snippet("has spaces", "url\"with\"quotes", "dir/");
+        let content = config_with_shadow(None, &snippet);
+
+        let config = parse_config(&content).unwrap();
+        let shadow = config.shadows.get("has spaces").unwrap();
+        assert_eq!(shadow.repo, "url\"with\"quotes");
     }
 
     #[test]
