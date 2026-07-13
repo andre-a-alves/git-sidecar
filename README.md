@@ -86,7 +86,17 @@ git shadow list [--global]
 
 `git shadow list` shows the shadows configured for the current repo — one per line with the nickname, remote URL, and mapping. With `--global`, it instead walks the whole config directory and lists every configured shadow, grouped under a `<host>/<owner>/<repo>:` header identifying the parent repo.
 
-Because `list` is a subcommand, it is reserved and cannot be used as a shadow nickname.
+### Syncing shadows
+
+```
+git shadow sync [<shadow-name>]
+```
+
+`git shadow sync` clones every configured shadow that is not already present into its `mapping` directory (a missing or empty directory counts as not present). Pass a shadow name to sync just that one.
+
+Shadows that are already cloned are left untouched, but their `remote.origin.url` is checked against the configured `repo` — a mismatch prints a warning. If a mapping directory exists and is non-empty but isn't a git repository, it is skipped with a warning. Any warning or failed clone makes the command exit non-zero.
+
+Because `list` and `sync` are subcommands, they are reserved and cannot be used as shadow nicknames.
 
 ## License
 

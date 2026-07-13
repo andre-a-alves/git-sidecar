@@ -8,6 +8,7 @@ use serde::Deserialize;
 const CONFIG_DIR_NAME: &str = "git-shadow";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_VERSION: u32 = 1;
+const RESERVED_NICKNAMES: [&str; 2] = ["list", "sync"];
 
 /// Parsed representation of a v1 git-shadow config file.
 #[derive(Debug, Deserialize)]
@@ -37,9 +38,14 @@ fn main() {
         run_list(&args[2..]);
     }
 
+    if args.len() >= 2 && args[1] == "sync" {
+        run_sync(&args[2..]);
+    }
+
     if args.len() < 3 {
         eprintln!("usage: git shadow <shadow-name> <git-command> [args...]");
         eprintln!("       git shadow list [--global]");
+        eprintln!("       git shadow sync [<shadow-name>]");
         process::exit(1);
     }
 
@@ -186,6 +192,187 @@ fn list_global() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn run_sync(args: &[String]) -> ! {
+    let target = parse_sync_args(args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        process::exit(1);
+    });
+
+    match sync_shadows(target.as_deref()) {
+        Ok(true) => process::exit(0),
+        Ok(false) => process::exit(1),
+        Err(e) => {
+            eprintln!("git-shadow: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+fn parse_sync_args(args: &[String]) -> Result<Option<String>, String> {
+    match args {
+        [] => Ok(None),
+        [name] if !name.starts_with('-') => Ok(Some(name.clone())),
+        _ => Err("usage: git shadow sync [<shadow-name>]".to_string()),
+    }
+}
+
+/// Syncs shadows for the current repo, cloning any that are not present.
+/// Returns Ok(true) when every selected shadow is present or was cloned.
+fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
+    let cwd = env::current_dir().map_err(|e| format!("failed to get current directory: {e}"))?;
+    let parent_repo = nearest_git_repo(&cwd)?;
+    let origin_url = remote_origin_url(&parent_repo)?;
+    let config_path = config_path_for_origin(&origin_url)?;
+
+    if !config_path.exists() {
+        if let Some(name) = target {
+            return Err(format!(
+                "shadow '{name}' not found; no config at {}",
+                config_path.display()
+            ));
+        }
+        println!(
+            "no shadows configured for {origin_url} ({})",
+            config_path.display()
+        );
+        return Ok(true);
+    }
+
+    let config = read_config(&config_path)?;
+
+    let mut selected: Vec<(&String, &Shadow)> = config
+        .shadows
+        .iter()
+        .filter(|(name, _)| target.is_none_or(|t| t == name.as_str()))
+        .collect();
+    selected.sort_by(|a, b| a.0.cmp(b.0));
+
+    if selected.is_empty() {
+        if let Some(name) = target {
+            return Err(format!(
+                "shadow '{name}' not found in {}",
+                config_path.display()
+            ));
+        }
+        println!(
+            "no shadows configured for {origin_url} ({})",
+            config_path.display()
+        );
+        return Ok(true);
+    }
+
+    let mut all_ok = true;
+    for (name, shadow) in selected {
+        if !sync_shadow(name, shadow, &parent_repo) {
+            all_ok = false;
+        }
+    }
+    Ok(all_ok)
+}
+
+fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> bool {
+    let shadow_dir = parent_repo.join(&shadow.mapping);
+
+    match sync_action(&shadow_dir) {
+        SyncAction::Clone => {
+            println!("{name}: cloning {} into {}", shadow.repo, shadow.mapping);
+            let status = process::Command::new("git")
+                .args(["clone", &shadow.repo])
+                .arg(&shadow_dir)
+                .status();
+            match status {
+                Ok(status) if status.success() => true,
+                Ok(_) => {
+                    eprintln!("git-shadow: {name}: git clone failed");
+                    false
+                }
+                Err(e) => {
+                    eprintln!("git-shadow: {name}: failed to run git clone: {e}");
+                    false
+                }
+            }
+        }
+        SyncAction::AlreadyPresent => match remote_origin_url(&shadow_dir) {
+            Ok(actual) if !same_remote(&actual, &shadow.repo) => {
+                eprintln!(
+                    "git-shadow: warning: {name}: origin is {actual}, config says {}",
+                    shadow.repo
+                );
+                false
+            }
+            Ok(_) => {
+                println!("{name}: already present");
+                true
+            }
+            Err(_) => {
+                eprintln!(
+                    "git-shadow: warning: {name}: existing repo in {} has no readable origin",
+                    shadow.mapping
+                );
+                false
+            }
+        },
+        SyncAction::NotARepo => {
+            eprintln!(
+                "git-shadow: warning: {name}: mapping '{}' exists but is not a git repository; skipping",
+                shadow.mapping
+            );
+            false
+        }
+        SyncAction::NotADirectory => {
+            eprintln!(
+                "git-shadow: warning: {name}: mapping '{}' exists but is not a directory; skipping",
+                shadow.mapping
+            );
+            false
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum SyncAction {
+    /// Mapping is missing or an empty directory: clone into it.
+    Clone,
+    /// Mapping holds a git repository.
+    AlreadyPresent,
+    /// Mapping is a non-empty directory without a git repository.
+    NotARepo,
+    /// Mapping exists but is not a directory.
+    NotADirectory,
+}
+
+fn sync_action(dir: &Path) -> SyncAction {
+    if !dir.exists() {
+        return SyncAction::Clone;
+    }
+    if !dir.is_dir() {
+        return SyncAction::NotADirectory;
+    }
+    if dir.join(".git").exists() {
+        return SyncAction::AlreadyPresent;
+    }
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => {
+            if entries.next().is_none() {
+                SyncAction::Clone
+            } else {
+                SyncAction::NotARepo
+            }
+        }
+        Err(_) => SyncAction::NotARepo,
+    }
+}
+
+/// Compares two remote URLs by their normalized host/owner/repo path, so the
+/// same repository reached over SSH and HTTPS still matches. Falls back to a
+/// literal comparison when either URL cannot be normalized.
+fn same_remote(a: &str, b: &str) -> bool {
+    match (normalize_remote_url(a), normalize_remote_url(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.trim() == b.trim(),
+    }
 }
 
 fn find_config_files(root: &Path) -> Vec<PathBuf> {
@@ -459,8 +646,8 @@ fn parse_config(content: &str) -> Result<Config, String> {
         if nickname.trim().is_empty() {
             return Err("shadow nickname cannot be empty".to_string());
         }
-        if nickname == "list" {
-            return Err("shadow nickname 'list' is reserved".to_string());
+        if RESERVED_NICKNAMES.contains(&nickname.as_str()) {
+            return Err(format!("shadow nickname '{nickname}' is reserved"));
         }
         if shadow.repo.trim().is_empty() {
             return Err(format!("shadow '{nickname}' has an empty repo"));
@@ -722,6 +909,109 @@ mapping = ".vendor/alpha/"
         let rows = sorted_shadow_rows(&config);
         assert_eq!(rows[0].0, "alpha");
         assert_eq!(rows[1].0, "zeta");
+    }
+
+    #[test]
+    fn reserved_sync_nickname_is_an_error() {
+        let err = parse_config(
+            r#"
+version = 1
+
+[shadows.sync]
+repo = "git@github.com:example/sync.git"
+mapping = ".vendor/sync/"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("shadow nickname 'sync' is reserved"));
+    }
+
+    #[test]
+    fn sync_args_default_to_all_shadows() {
+        assert_eq!(parse_sync_args(&[]), Ok(None));
+    }
+
+    #[test]
+    fn sync_args_accept_a_shadow_name() {
+        assert_eq!(
+            parse_sync_args(&["cardlet".to_string()]),
+            Ok(Some("cardlet".to_string()))
+        );
+    }
+
+    #[test]
+    fn sync_args_reject_flags_and_extra_arguments() {
+        let err = parse_sync_args(&["--global".to_string()]).unwrap_err();
+        assert!(err.contains("usage: git shadow sync [<shadow-name>]"));
+
+        let err = parse_sync_args(&["a".to_string(), "b".to_string()]).unwrap_err();
+        assert!(err.contains("usage: git shadow sync [<shadow-name>]"));
+    }
+
+    #[test]
+    fn missing_mapping_needs_a_clone() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(sync_action(&root.path().join("missing")), SyncAction::Clone);
+    }
+
+    #[test]
+    fn empty_mapping_directory_needs_a_clone() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("empty");
+        std::fs::create_dir(&dir).unwrap();
+
+        assert_eq!(sync_action(&dir), SyncAction::Clone);
+    }
+
+    #[test]
+    fn mapping_with_git_dir_is_already_present() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("repo");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+
+        assert_eq!(sync_action(&dir), SyncAction::AlreadyPresent);
+    }
+
+    #[test]
+    fn non_empty_mapping_without_git_dir_is_not_a_repo() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("files");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), "").unwrap();
+
+        assert_eq!(sync_action(&dir), SyncAction::NotARepo);
+    }
+
+    #[test]
+    fn mapping_that_is_a_file_is_not_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("mapping");
+        std::fs::write(&file, "").unwrap();
+
+        assert_eq!(sync_action(&file), SyncAction::NotADirectory);
+    }
+
+    #[test]
+    fn same_remote_matches_across_ssh_and_https() {
+        assert!(same_remote(
+            "git@github.com:andre-a-alves/cardlet.git",
+            "https://github.com/andre-a-alves/cardlet"
+        ));
+    }
+
+    #[test]
+    fn same_remote_rejects_different_repos() {
+        assert!(!same_remote(
+            "git@github.com:andre-a-alves/cardlet.git",
+            "git@github.com:andre-a-alves/git-shadow.git"
+        ));
+    }
+
+    #[test]
+    fn same_remote_falls_back_to_literal_comparison() {
+        assert!(same_remote("/srv/git/repo.git", "/srv/git/repo.git"));
+        assert!(!same_remote("/srv/git/repo.git", "/srv/git/other.git"));
     }
 
     #[test]
