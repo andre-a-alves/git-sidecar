@@ -14,7 +14,7 @@ A shadow repo is a separate git repository checked out inside another project â€
 cargo install git-shadow
 ```
 
-This installs the `git-shad` binary. Git automatically treats any `git-<name>` binary on your `PATH` as a subcommand, so it becomes available as `git shad`.
+This installs the `git-shadow` binary. Git automatically treats any `git-<name>` binary on your `PATH` as a subcommand, so it becomes available as `git shadow`.
 
 ## Configuration
 
@@ -24,7 +24,7 @@ Configuration is stored outside the project, under your OS config directory:
 - macOS: `~/Library/Application Support/git-shadow`
 - Windows: `%APPDATA%\git-shadow`
 
-`git-shad` identifies the current project from the nearest Git repository's `remote.origin.url`.
+`git-shadow` identifies the current project from the nearest Git repository's `remote.origin.url`.
 The remote URL is normalized into a repo-shaped config path. For example, a parent repo with this origin:
 
 ```
@@ -57,26 +57,36 @@ You can define as many `[shadows.<nickname>]` entries as you need.
 ## Usage
 
 ```
-git shad <shadow-name> <git-command> [args...]
+git shadow <shadow-name> <git-command> [args...]
 ```
 
-`git-shad` finds the nearest Git repository, loads its OS config file, then runs the given git command inside the shadow's `mapping` directory. You can run it from anywhere inside your project.
+`git-shadow` finds the nearest Git repository, loads its OS config file, then runs the given git command inside the shadow's `mapping` directory. You can run it from anywhere inside your project.
 
 ```
 # List branches of the shadow repo
-git shad foobar branch
+git shadow foobar branch
 
 # Pull latest changes
-git shad foobar pull
+git shadow foobar pull
 
 # View recent commits
-git shad foobar log --oneline
+git shadow foobar log --oneline
 
 # Check status
-git shad foobar status
+git shadow foobar status
 ```
 
 Any git command and its arguments are passed through as-is.
+
+### Listing shadows
+
+```
+git shadow list [--global]
+```
+
+`git shadow list` shows the shadows configured for the current repo â€” one per line with the nickname, remote URL, and mapping. With `--global`, it instead walks the whole config directory and lists every configured shadow, grouped under a `<host>/<owner>/<repo>:` header identifying the parent repo.
+
+Because `list` is a subcommand, it is reserved and cannot be used as a shadow nickname.
 
 ## License
 
