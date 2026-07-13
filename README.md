@@ -52,7 +52,7 @@ mapping = ".vendor/foobar/"
 - **`repo`** — the remote URL for the shadow repository
 - **`mapping`** — path to the directory containing the shadow git repository, relative to the parent repo root
 
-You can define as many `[shadows.<nickname>]` entries as you need.
+You can define as many `[shadows.<nickname>]` entries as you need. You don't have to write this file by hand — `git shadow clone` creates and extends it for you.
 
 ## Usage
 
@@ -86,7 +86,61 @@ git shadow list [--global]
 
 `git shadow list` shows the shadows configured for the current repo — one per line with the nickname, remote URL, and mapping. With `--global`, it instead walks the whole config directory and lists every configured shadow, grouped under a `<host>/<owner>/<repo>:` header identifying the parent repo.
 
-Because `list` is a subcommand, it is reserved and cannot be used as a shadow nickname.
+### Syncing shadows
+
+```
+git shadow sync [<shadow-name>]
+```
+
+`git shadow sync` clones every configured shadow that is not already present into its `mapping` directory (a missing or empty directory counts as not present). Pass a shadow name to sync just that one.
+
+Shadows that are already cloned are left untouched, but their `remote.origin.url` is checked against the configured `repo` — a mismatch prints a warning. If a mapping directory exists and is non-empty but isn't a git repository, it is skipped with a warning. Any warning or failed clone makes the command exit non-zero.
+
+`sync` also makes sure every present shadow is listed in the parent repo's exclude file (see below), so shadow directories never show up in the parent's `git status`.
+
+### Cloning a new shadow
+
+```
+git shadow clone <repo-url> [<directory>] [--name <nickname>]
+```
+
+`git shadow clone` clones a repo into the parent repository and registers it as a shadow — creating the config file if it doesn't exist yet. The nickname and directory both default to the repository name from the URL:
+
+```
+# Clones into ./foobar, registers as [shadows.foobar]
+git shadow clone git@github.com:example/foobar.git
+
+# Clones into .vendor/fb, registers as [shadows.fb]
+git shadow clone git@github.com:example/foobar.git .vendor/fb --name fb
+```
+
+The directory is resolved relative to where you run the command (like `git clone`), and the stored `mapping` is computed relative to the parent repo root. If the nickname or mapping is already taken, or the target directory is non-empty, the command refuses and changes nothing. Existing config file content is preserved — the new entry is appended.
+
+`clone` also adds the new directory to the parent repo's exclude file.
+
+### Removing a shadow
+
+```
+git shadow remove <shadow-name> [--delete]
+git shadow rm <shadow-name> [--delete]      # alias
+```
+
+`git shadow remove` deletes the shadow's entry from the config file and its line from the exclude file's managed block. The cloned directory is left on disk by default — pass `--delete` to remove it as well (careful: this discards any unpushed work in the shadow).
+
+Because `list`, `sync`, `clone`, `remove`, `rm`, and `help` are subcommands, they are reserved and cannot be used as shadow nicknames.
+
+### The exclude file
+
+`clone` and `sync` keep shadow directories out of the parent repo's `git status` by adding them to `.git/info/exclude` (the local, uncommitted counterpart to `.gitignore`). Entries live in a managed block, and anything outside it is never touched:
+
+```
+# >>> git-shadow (managed) >>>
+/foobar/
+/.vendor/dep2/
+# <<< git-shadow (managed) <<<
+```
+
+`clone` and `sync` only add entries; `git shadow remove` deletes a shadow's entry. If you edit the config by hand instead, clean up the block yourself.
 
 ## License
 
