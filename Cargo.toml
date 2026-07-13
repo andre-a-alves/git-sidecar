@@ -10,7 +10,11 @@ keywords = ["git", "cli", "vendor", "shadow"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
 [dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 

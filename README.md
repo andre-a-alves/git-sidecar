@@ -127,7 +127,7 @@ git shadow rm <shadow-name> [--delete]      # alias
 
 `git shadow remove` deletes the shadow's entry from the config file and its line from the exclude file's managed block. The cloned directory is left on disk by default — pass `--delete` to remove it as well (careful: this discards any unpushed work in the shadow).
 
-Because `list`, `sync`, `clone`, `remove`, and `rm` are subcommands, they are reserved and cannot be used as shadow nicknames.
+Because `list`, `sync`, `clone`, `remove`, `rm`, and `help` are subcommands, they are reserved and cannot be used as shadow nicknames.
 
 ### The exclude file
 
