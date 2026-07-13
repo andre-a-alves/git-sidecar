@@ -33,8 +33,13 @@ struct RawConfig {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    if args.len() >= 2 && args[1] == "list" {
+        run_list(&args[2..]);
+    }
+
     if args.len() < 3 {
-        eprintln!("usage: git shad <shadow-name> <git-command> [args...]");
+        eprintln!("usage: git shadow <shadow-name> <git-command> [args...]");
+        eprintln!("       git shadow list [--global]");
         process::exit(1);
     }
 
@@ -42,33 +47,33 @@ fn main() {
     let git_args = &args[2..];
 
     let cwd = env::current_dir().unwrap_or_else(|e| {
-        eprintln!("git-shad: failed to get current directory: {e}");
+        eprintln!("git-shadow: failed to get current directory: {e}");
         process::exit(1);
     });
 
     let parent_repo = nearest_git_repo(&cwd).unwrap_or_else(|e| {
-        eprintln!("git-shad: {e}");
+        eprintln!("git-shadow: {e}");
         process::exit(1);
     });
 
     let origin_url = remote_origin_url(&parent_repo).unwrap_or_else(|e| {
-        eprintln!("git-shad: {e}");
+        eprintln!("git-shadow: {e}");
         process::exit(1);
     });
 
     let config_path = config_path_for_origin(&origin_url).unwrap_or_else(|e| {
-        eprintln!("git-shad: {e}");
+        eprintln!("git-shadow: {e}");
         process::exit(1);
     });
 
     let config = read_config(&config_path).unwrap_or_else(|e| {
-        eprintln!("git-shad: {e}");
+        eprintln!("git-shadow: {e}");
         process::exit(1);
     });
 
     let shadow = config.shadows.get(shadow_name).unwrap_or_else(|| {
         eprintln!(
-            "git-shad: shadow '{shadow_name}' not found in {}",
+            "git-shadow: shadow '{shadow_name}' not found in {}",
             config_path.display()
         );
         process::exit(1);
@@ -82,13 +87,156 @@ fn main() {
         .status()
         .unwrap_or_else(|e| {
             eprintln!(
-                "git-shad: failed to run git in {}: {e}",
+                "git-shadow: failed to run git in {}: {e}",
                 shadow_dir.display()
             );
             process::exit(1);
         });
 
     process::exit(status.code().unwrap_or(1));
+}
+
+fn run_list(args: &[String]) -> ! {
+    let global = parse_list_args(args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        process::exit(1);
+    });
+
+    let result = if global { list_global() } else { list_local() };
+
+    if let Err(e) = result {
+        eprintln!("git-shadow: {e}");
+        process::exit(1);
+    }
+    process::exit(0);
+}
+
+fn parse_list_args(args: &[String]) -> Result<bool, String> {
+    match args {
+        [] => Ok(false),
+        [flag] if flag == "--global" => Ok(true),
+        _ => Err("usage: git shadow list [--global]".to_string()),
+    }
+}
+
+fn list_local() -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|e| format!("failed to get current directory: {e}"))?;
+    let parent_repo = nearest_git_repo(&cwd)?;
+    let origin_url = remote_origin_url(&parent_repo)?;
+    let config_path = config_path_for_origin(&origin_url)?;
+
+    if !config_path.exists() {
+        println!(
+            "no shadows configured for {origin_url} ({})",
+            config_path.display()
+        );
+        return Ok(());
+    }
+
+    let config = read_config(&config_path)?;
+    if config.shadows.is_empty() {
+        println!(
+            "no shadows configured for {origin_url} ({})",
+            config_path.display()
+        );
+        return Ok(());
+    }
+
+    for line in format_shadow_rows(&sorted_shadow_rows(&config)) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn list_global() -> Result<(), String> {
+    let root = platform_config_dir()?.join(CONFIG_DIR_NAME);
+    let config_files = find_config_files(&root);
+
+    if config_files.is_empty() {
+        println!("no shadows configured under {}", root.display());
+        return Ok(());
+    }
+
+    let mut first = true;
+    for config_path in config_files {
+        let config = match read_config(&config_path) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("git-shadow: warning: skipping {e}");
+                continue;
+            }
+        };
+
+        let label = config_path
+            .parent()
+            .and_then(|dir| dir.strip_prefix(&root).ok())
+            .map_or_else(
+                || config_path.display().to_string(),
+                |repo| repo.display().to_string(),
+            );
+
+        if !first {
+            println!();
+        }
+        first = false;
+
+        println!("{label}:");
+        for line in format_shadow_rows(&sorted_shadow_rows(&config)) {
+            println!("  {line}");
+        }
+    }
+    Ok(())
+}
+
+fn find_config_files(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    collect_config_files(root, &mut found);
+    found.sort();
+    found
+}
+
+fn collect_config_files(dir: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_config_files(&path, found);
+        } else if entry.file_name() == CONFIG_FILE_NAME {
+            found.push(path);
+        }
+    }
+}
+
+fn sorted_shadow_rows(config: &Config) -> Vec<(&str, &str, &str)> {
+    let mut rows: Vec<_> = config
+        .shadows
+        .iter()
+        .map(|(name, shadow)| (name.as_str(), shadow.repo.as_str(), shadow.mapping.as_str()))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    rows
+}
+
+fn format_shadow_rows(rows: &[(&str, &str, &str)]) -> Vec<String> {
+    let name_width = rows
+        .iter()
+        .map(|(name, _, _)| name.len())
+        .max()
+        .unwrap_or(0);
+    let repo_width = rows
+        .iter()
+        .map(|(_, repo, _)| repo.len())
+        .max()
+        .unwrap_or(0);
+
+    rows.iter()
+        .map(|(name, repo, mapping)| {
+            format!("{name:<name_width$}   {repo:<repo_width$}   {mapping}")
+        })
+        .collect()
 }
 
 fn nearest_git_repo(start: &Path) -> Result<PathBuf, String> {
@@ -311,6 +459,9 @@ fn parse_config(content: &str) -> Result<Config, String> {
         if nickname.trim().is_empty() {
             return Err("shadow nickname cannot be empty".to_string());
         }
+        if nickname == "list" {
+            return Err("shadow nickname 'list' is reserved".to_string());
+        }
         if shadow.repo.trim().is_empty() {
             return Err(format!("shadow '{nickname}' has an empty repo"));
         }
@@ -492,5 +643,112 @@ mapping = "C:\\tmp\\cardlet"
     fn resolves_config_path_under_git_shadow_dir() {
         let path = config_path_for_origin("git@github.com:andre-a-alves/git-shadow.git").unwrap();
         assert!(path.ends_with("git-shadow/github.com/andre-a-alves/git-shadow/config.toml"));
+    }
+
+    #[test]
+    fn reserved_list_nickname_is_an_error() {
+        let err = parse_config(
+            r#"
+version = 1
+
+[shadows.list]
+repo = "git@github.com:example/list.git"
+mapping = ".vendor/list/"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("shadow nickname 'list' is reserved"));
+    }
+
+    #[test]
+    fn list_args_default_to_local() {
+        assert_eq!(parse_list_args(&[]), Ok(false));
+    }
+
+    #[test]
+    fn list_args_accept_global_flag() {
+        assert_eq!(parse_list_args(&["--global".to_string()]), Ok(true));
+    }
+
+    #[test]
+    fn list_args_reject_unknown_arguments() {
+        let err = parse_list_args(&["--bogus".to_string()]).unwrap_err();
+        assert!(err.contains("usage: git shadow list [--global]"));
+
+        let err = parse_list_args(&["--global".to_string(), "extra".to_string()]).unwrap_err();
+        assert!(err.contains("usage: git shadow list [--global]"));
+    }
+
+    #[test]
+    fn formats_shadow_rows_with_aligned_columns() {
+        let rows = vec![
+            (
+                "cardlet",
+                "git@github.com:andre-a-alves/cardlet.git",
+                ".test/",
+            ),
+            ("fb", "git@github.com:example/foobar.git", ".vendor/foobar/"),
+        ];
+
+        let lines = format_shadow_rows(&rows);
+
+        assert_eq!(
+            lines,
+            vec![
+                "cardlet   git@github.com:andre-a-alves/cardlet.git   .test/",
+                "fb        git@github.com:example/foobar.git          .vendor/foobar/",
+            ]
+        );
+    }
+
+    #[test]
+    fn sorts_shadow_rows_by_nickname() {
+        let config = parse_config(
+            r#"
+version = 1
+
+[shadows.zeta]
+repo = "git@github.com:example/zeta.git"
+mapping = ".vendor/zeta/"
+
+[shadows.alpha]
+repo = "git@github.com:example/alpha.git"
+mapping = ".vendor/alpha/"
+"#,
+        )
+        .unwrap();
+
+        let rows = sorted_shadow_rows(&config);
+        assert_eq!(rows[0].0, "alpha");
+        assert_eq!(rows[1].0, "zeta");
+    }
+
+    #[test]
+    fn finds_nested_config_files() {
+        let root = tempfile::tempdir().unwrap();
+
+        let repo_a = root.path().join("github.com/example/alpha");
+        let repo_b = root.path().join("gitlab.com/example/beta");
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        std::fs::write(repo_a.join("config.toml"), "").unwrap();
+        std::fs::write(repo_b.join("config.toml"), "").unwrap();
+        std::fs::write(repo_a.join("notes.txt"), "").unwrap();
+
+        let found = find_config_files(root.path());
+
+        assert_eq!(
+            found,
+            vec![repo_a.join("config.toml"), repo_b.join("config.toml")]
+        );
+    }
+
+    #[test]
+    fn finding_config_files_in_missing_root_returns_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("does-not-exist");
+
+        assert!(find_config_files(&missing).is_empty());
     }
 }
