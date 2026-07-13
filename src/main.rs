@@ -8,7 +8,7 @@ use serde::Deserialize;
 const CONFIG_DIR_NAME: &str = "git-shadow";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CONFIG_VERSION: u32 = 1;
-const RESERVED_NICKNAMES: [&str; 3] = ["list", "sync", "clone"];
+const RESERVED_NICKNAMES: [&str; 5] = ["list", "sync", "clone", "remove", "rm"];
 const EXCLUDE_SECTION_START: &str = "# >>> git-shadow (managed) >>>";
 const EXCLUDE_SECTION_END: &str = "# <<< git-shadow (managed) <<<";
 
@@ -30,6 +30,7 @@ struct Shadow {
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     version: Option<u32>,
+    #[serde(default)]
     shadows: HashMap<String, Shadow>,
 }
 
@@ -48,11 +49,16 @@ fn main() {
         run_clone(&args[2..]);
     }
 
+    if args.len() >= 2 && (args[1] == "remove" || args[1] == "rm") {
+        run_remove(&args[2..]);
+    }
+
     if args.len() < 3 {
         eprintln!("usage: git shadow <shadow-name> <git-command> [args...]");
         eprintln!("       git shadow list [--global]");
         eprintln!("       git shadow sync [<shadow-name>]");
         eprintln!("       git shadow clone <repo-url> [<directory>] [--name <nickname>]");
+        eprintln!("       git shadow remove <shadow-name> [--delete]");
         process::exit(1);
     }
 
@@ -814,6 +820,209 @@ fn config_with_shadow(existing: Option<&str>, snippet: &str) -> String {
         }
         None => format!("version = {CONFIG_VERSION}\n\n{snippet}"),
     }
+}
+
+fn run_remove(args: &[String]) -> ! {
+    let (name, delete) = parse_remove_args(args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        process::exit(1);
+    });
+
+    if let Err(e) = remove_shadow(&name, delete) {
+        eprintln!("git-shadow: {e}");
+        process::exit(1);
+    }
+    process::exit(0);
+}
+
+fn parse_remove_args(args: &[String]) -> Result<(String, bool), String> {
+    const USAGE: &str = "usage: git shadow remove <shadow-name> [--delete]";
+
+    let mut name = None;
+    let mut delete = false;
+    for arg in args {
+        if arg == "--delete" {
+            if delete {
+                return Err(USAGE.to_string());
+            }
+            delete = true;
+        } else if arg.starts_with('-') || name.is_some() {
+            return Err(USAGE.to_string());
+        } else {
+            name = Some(arg.clone());
+        }
+    }
+
+    Ok((name.ok_or_else(|| USAGE.to_string())?, delete))
+}
+
+/// Removes a shadow from the config and the exclude file. The mapping
+/// directory is left on disk unless `delete` is set.
+fn remove_shadow(name: &str, delete: bool) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|e| format!("failed to get current directory: {e}"))?;
+    let parent_repo = nearest_git_repo(&cwd)?;
+    let origin_url = remote_origin_url(&parent_repo)?;
+    let config_path = config_path_for_origin(&origin_url)?;
+
+    if !config_path.exists() {
+        return Err(format!(
+            "shadow '{name}' not found; no config at {}",
+            config_path.display()
+        ));
+    }
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
+    let config = parse_config(&content)
+        .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;
+
+    let shadow = config
+        .shadows
+        .get(name)
+        .ok_or_else(|| format!("shadow '{name}' not found in {}", config_path.display()))?;
+    let mapping = shadow.mapping.clone();
+
+    let new_content = config_without_shadow(&content, name)?;
+    let new_config = parse_config(&new_content)
+        .map_err(|e| format!("refusing to write an invalid config: {e}"))?;
+    if new_config.shadows.len() != config.shadows.len() - 1 || new_config.shadows.contains_key(name)
+    {
+        return Err(format!(
+            "refusing to write config: removal would not drop exactly shadow '{name}'"
+        ));
+    }
+
+    std::fs::write(&config_path, new_content)
+        .map_err(|e| format!("failed to write {}: {e}", config_path.display()))?;
+    println!("removed shadow '{name}' from {}", config_path.display());
+
+    match remove_mapping_exclusion(&parent_repo, &mapping) {
+        Ok(Some(exclude_path)) => {
+            println!(
+                "removed '{}' from {}",
+                exclude_entry(&mapping),
+                exclude_path.display()
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return Err(format!(
+                "shadow was removed from config, but updating git exclude failed: {e}"
+            ));
+        }
+    }
+
+    if delete {
+        let dir = normalize_lexically(&parent_repo.join(&mapping));
+        let parent = normalize_lexically(&parent_repo);
+        if !dir.starts_with(&parent) || dir == parent {
+            return Err(format!(
+                "refusing to delete {}: it is not inside the parent repository",
+                dir.display()
+            ));
+        }
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .map_err(|e| format!("failed to delete {}: {e}", dir.display()))?;
+            println!("deleted {}", dir.display());
+        }
+    }
+
+    Ok(())
+}
+
+/// Removes a shadow's table from the config's text, preserving everything
+/// else. Fails if the table's header cannot be located textually.
+fn config_without_shadow(content: &str, name: &str) -> Result<String, String> {
+    let lines: Vec<&str> = content.lines().collect();
+
+    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let header_forms = [
+        format!("[shadows.{name}]"),
+        format!("[shadows.\"{escaped}\"]"),
+        format!("[shadows.'{name}']"),
+    ];
+    let start = lines
+        .iter()
+        .position(|line| header_forms.iter().any(|form| line.trim() == form))
+        .ok_or_else(|| {
+            format!("could not locate the [shadows.{name}] entry in the config; remove it manually")
+        })?;
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+
+    let mut kept: Vec<&str> = Vec::new();
+    kept.extend(&lines[..start]);
+    kept.extend(&lines[end..]);
+
+    let mut out = kept.join("\n");
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    let out = out.trim_matches('\n');
+    if out.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("{out}\n"))
+}
+
+/// Drops a mapping's entry from the managed section of the parent repo's
+/// exclude file. Returns the file's path when it was actually rewritten.
+fn remove_mapping_exclusion(parent_repo: &Path, mapping: &str) -> Result<Option<PathBuf>, String> {
+    let exclude_path = git_exclude_path(parent_repo)?;
+    if !exclude_path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&exclude_path)
+        .map_err(|e| format!("failed to read {}: {e}", exclude_path.display()))?;
+
+    let (new_content, changed) = without_excluded_entry(&content, &exclude_entry(mapping));
+    if !changed {
+        return Ok(None);
+    }
+
+    std::fs::write(&exclude_path, new_content)
+        .map_err(|e| format!("failed to write {}: {e}", exclude_path.display()))?;
+    Ok(Some(exclude_path))
+}
+
+/// Removes an entry from the git-shadow managed section of an exclude
+/// file's content. Lines outside the section are never touched.
+fn without_excluded_entry(content: &str, entry: &str) -> (String, bool) {
+    let lines: Vec<&str> = content.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == EXCLUDE_SECTION_START);
+    let end = start.and_then(|start| {
+        lines[start + 1..]
+            .iter()
+            .position(|line| line.trim() == EXCLUDE_SECTION_END)
+            .map(|offset| start + 1 + offset)
+    });
+
+    let (Some(start), Some(end)) = (start, end) else {
+        return (content.to_string(), false);
+    };
+
+    let kept_in_section: Vec<&str> = lines[start + 1..end]
+        .iter()
+        .filter(|line| line.trim() != entry)
+        .copied()
+        .collect();
+    if kept_in_section.len() == end - start - 1 {
+        return (content.to_string(), false);
+    }
+
+    let mut out_lines: Vec<&str> = Vec::new();
+    out_lines.extend(&lines[..=start]);
+    out_lines.extend(kept_in_section);
+    out_lines.extend(&lines[end..]);
+
+    let mut out = out_lines.join("\n");
+    out.push('\n');
+    (out, true)
 }
 
 fn toml_string(value: &str) -> String {
@@ -1595,6 +1804,139 @@ mapping = ".vendor/clone/"
         let config = parse_config(&content).unwrap();
         let shadow = config.shadows.get("has spaces").unwrap();
         assert_eq!(shadow.repo, "url\"with\"quotes");
+    }
+
+    #[test]
+    fn reserved_remove_and_rm_nicknames_are_errors() {
+        for nickname in ["remove", "rm"] {
+            let err = parse_config(&format!(
+                r#"
+version = 1
+
+[shadows.{nickname}]
+repo = "git@github.com:example/x.git"
+mapping = ".vendor/x/"
+"#
+            ))
+            .unwrap_err();
+
+            assert!(err.contains(&format!("shadow nickname '{nickname}' is reserved")));
+        }
+    }
+
+    #[test]
+    fn remove_args_require_a_name() {
+        let err = parse_remove_args(&[]).unwrap_err();
+        assert!(err.contains("usage: git shadow remove"));
+    }
+
+    #[test]
+    fn remove_args_accept_name_and_delete_flag() {
+        assert_eq!(
+            parse_remove_args(&["cardlet".to_string()]),
+            Ok(("cardlet".to_string(), false))
+        );
+        assert_eq!(
+            parse_remove_args(&["cardlet".to_string(), "--delete".to_string()]),
+            Ok(("cardlet".to_string(), true))
+        );
+        assert_eq!(
+            parse_remove_args(&["--delete".to_string(), "cardlet".to_string()]),
+            Ok(("cardlet".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn remove_args_reject_unknown_flags_and_extra_names() {
+        for args in [
+            vec!["cardlet".to_string(), "--force".to_string()],
+            vec!["a".to_string(), "b".to_string()],
+            vec!["--delete".to_string()],
+        ] {
+            let err = parse_remove_args(&args).unwrap_err();
+            assert!(err.contains("usage: git shadow remove"), "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn removes_shadow_table_and_keeps_the_rest() {
+        let content = "\
+version = 1
+
+# keep me
+[shadows.cardlet]
+repo = \"git@github.com:andre-a-alves/cardlet.git\"
+mapping = \".test/\"
+
+[shadows.foobar]
+repo = \"git@github.com:example/foobar.git\"
+mapping = \".vendor/foobar/\"
+";
+
+        let out = config_without_shadow(content, "cardlet").unwrap();
+        let config = parse_config(&out).unwrap();
+
+        assert_eq!(config.shadows.len(), 1);
+        assert!(config.shadows.contains_key("foobar"));
+        assert!(out.contains("# keep me"));
+        assert!(!out.contains("cardlet"));
+    }
+
+    #[test]
+    fn removes_last_shadow_leaving_version_only() {
+        let out = config_without_shadow(EXAMPLE_TOML, "cardlet").unwrap();
+
+        assert_eq!(out.trim(), "version = 1");
+        let config = parse_config(&out).unwrap();
+        assert!(config.shadows.is_empty());
+    }
+
+    #[test]
+    fn removes_quoted_key_shadow_table() {
+        let snippet = shadow_config_snippet("has spaces", "url", "dir/");
+        let content = config_with_shadow(Some(EXAMPLE_TOML), &snippet);
+
+        let out = config_without_shadow(&content, "has spaces").unwrap();
+        let config = parse_config(&out).unwrap();
+
+        assert_eq!(config.shadows.len(), 1);
+        assert!(config.shadows.contains_key("cardlet"));
+    }
+
+    #[test]
+    fn unlocatable_shadow_table_is_an_error() {
+        let err = config_without_shadow(EXAMPLE_TOML, "missing").unwrap_err();
+        assert!(err.contains("remove it manually"));
+    }
+
+    #[test]
+    fn removes_entry_from_managed_exclude_section() {
+        let content = "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n/fb/\n# <<< git-shadow (managed) <<<\n";
+        let (out, changed) = without_excluded_entry(content, "/foobar/");
+
+        assert!(changed);
+        assert_eq!(
+            out,
+            "*.log\n\n# >>> git-shadow (managed) >>>\n/fb/\n# <<< git-shadow (managed) <<<\n"
+        );
+    }
+
+    #[test]
+    fn absent_exclude_entry_changes_nothing() {
+        let content = "# >>> git-shadow (managed) >>>\n/fb/\n# <<< git-shadow (managed) <<<\n";
+        let (out, changed) = without_excluded_entry(content, "/foobar/");
+
+        assert!(!changed);
+        assert_eq!(out, content);
+    }
+
+    #[test]
+    fn matching_rule_outside_managed_section_is_not_removed() {
+        let content = "/foobar/\n";
+        let (out, changed) = without_excluded_entry(content, "/foobar/");
+
+        assert!(!changed);
+        assert_eq!(out, content);
     }
 
     #[test]

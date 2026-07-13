@@ -118,7 +118,16 @@ The directory is resolved relative to where you run the command (like `git clone
 
 `clone` also adds the new directory to the parent repo's exclude file.
 
-Because `list`, `sync`, and `clone` are subcommands, they are reserved and cannot be used as shadow nicknames.
+### Removing a shadow
+
+```
+git shadow remove <shadow-name> [--delete]
+git shadow rm <shadow-name> [--delete]      # alias
+```
+
+`git shadow remove` deletes the shadow's entry from the config file and its line from the exclude file's managed block. The cloned directory is left on disk by default — pass `--delete` to remove it as well (careful: this discards any unpushed work in the shadow).
+
+Because `list`, `sync`, `clone`, `remove`, and `rm` are subcommands, they are reserved and cannot be used as shadow nicknames.
 
 ### The exclude file
 
@@ -131,7 +140,7 @@ Because `list`, `sync`, and `clone` are subcommands, they are reserved and canno
 # <<< git-shadow (managed) <<<
 ```
 
-Entries are only added, never removed — if you delete a shadow from the config, remove its line from the block yourself.
+`clone` and `sync` only add entries; `git shadow remove` deletes a shadow's entry. If you edit the config by hand instead, clean up the block yourself.
 
 ## License
 
