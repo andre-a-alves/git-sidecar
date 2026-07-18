@@ -111,7 +111,13 @@ fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str)> {
     let mut rows: Vec<_> = config
         .sidecars
         .iter()
-        .map(|(name, sidecar)| (name.as_str(), sidecar.repo.as_str(), sidecar.mapping.as_str()))
+        .map(|(name, sidecar)| {
+            (
+                name.as_str(),
+                sidecar.repo.as_str(),
+                sidecar.mapping.as_str(),
+            )
+        })
         .collect();
     rows.sort_by(|a, b| a.0.cmp(b.0));
     rows

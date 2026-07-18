@@ -21,7 +21,11 @@ pub fn run(repo: &str, directory: Option<String>, name: Option<String>) -> ExitC
 /// Clones a new sidecar repo and registers it in the parent repo's config,
 /// creating the config file if it does not exist yet. Refuses to touch
 /// anything on nickname/mapping conflicts or a non-empty target directory.
-fn clone_sidecar(repo: &str, directory: Option<String>, name: Option<String>) -> Result<(), String> {
+fn clone_sidecar(
+    repo: &str,
+    directory: Option<String>,
+    name: Option<String>,
+) -> Result<(), String> {
     let ctx = RepoContext::discover()?;
 
     let nickname = match name {

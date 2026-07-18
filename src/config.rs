@@ -205,7 +205,9 @@ pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, Strin
         .iter()
         .position(|line| header_forms.iter().any(|form| line.trim() == form))
         .ok_or_else(|| {
-            format!("could not locate the [sidecars.{name}] entry in the config; remove it manually")
+            format!(
+                "could not locate the [sidecars.{name}] entry in the config; remove it manually"
+            )
         })?;
     let end = lines[start + 1..]
         .iter()

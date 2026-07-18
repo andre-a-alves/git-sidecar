@@ -30,16 +30,19 @@ fn remove_sidecar(name: &str, delete: bool) -> Result<(), String> {
     let config = parse_config(&content)
         .map_err(|e| format!("failed to parse {}: {e}", ctx.config_path.display()))?;
 
-    let sidecar = config
-        .sidecars
-        .get(name)
-        .ok_or_else(|| format!("sidecar '{name}' not found in {}", ctx.config_path.display()))?;
+    let sidecar = config.sidecars.get(name).ok_or_else(|| {
+        format!(
+            "sidecar '{name}' not found in {}",
+            ctx.config_path.display()
+        )
+    })?;
     let mapping = sidecar.mapping.clone();
 
     let new_content = config_without_sidecar(&content, name)?;
     let new_config = parse_config(&new_content)
         .map_err(|e| format!("refusing to write an invalid config: {e}"))?;
-    if new_config.sidecars.len() != config.sidecars.len() - 1 || new_config.sidecars.contains_key(name)
+    if new_config.sidecars.len() != config.sidecars.len() - 1
+        || new_config.sidecars.contains_key(name)
     {
         return Err(format!(
             "refusing to write config: removal would not drop exactly sidecar '{name}'"
@@ -48,7 +51,10 @@ fn remove_sidecar(name: &str, delete: bool) -> Result<(), String> {
 
     std::fs::write(&ctx.config_path, new_content)
         .map_err(|e| format!("failed to write {}: {e}", ctx.config_path.display()))?;
-    println!("removed sidecar '{name}' from {}", ctx.config_path.display());
+    println!(
+        "removed sidecar '{name}' from {}",
+        ctx.config_path.display()
+    );
 
     match remove_mapping_exclusion(&ctx.parent_repo, &mapping) {
         Ok(Some(exclude_path)) => {

@@ -209,7 +209,8 @@ mod tests {
 
     #[test]
     fn present_entries_leave_exclude_unchanged() {
-        let existing = "# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n";
+        let existing =
+            "# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n";
         let (out, changed) = with_excluded_entries(existing, &["/foobar/".to_string()]);
 
         assert!(!changed);
