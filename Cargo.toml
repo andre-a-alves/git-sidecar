@@ -1,12 +1,12 @@
 [package]
-name = "git-shadow"
-version = "0.0.4"
+name = "git-sidecar"
+version = "0.0.1"
 edition = "2024"
-description = "Standalone shadow copies of git repos (or parts of them) in a working directory."
+description = "Standalone sidecar copies of git repos (or parts of them) in a working directory."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/andre-a-alves/git-shadow"
+repository = "https://github.com/andre-a-alves/git-sidecar"
 readme = "README.md"
-keywords = ["git", "cli", "vendor", "shadow"]
+keywords = ["git", "cli", "vendor", "sidecar"]
 categories = ["command-line-utilities"]
 rust-version = "1.85"
 
@@ -23,5 +23,5 @@ toml = "1"
 tempfile = "3"
 
 [[bin]]
-name = "git-shadow"
+name = "git-sidecar"
 path = "src/main.rs"

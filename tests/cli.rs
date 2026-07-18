@@ -1,4 +1,4 @@
-//! End-to-end tests that drive the compiled `git-shadow` binary against
+//! End-to-end tests that drive the compiled `git-sidecar` binary against
 //! real git repositories in a temporary directory, with the config
 //! directory isolated per test via the platform's config env var.
 
@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_git-shadow");
+const BIN: &str = env!("CARGO_BIN_EXE_git-sidecar");
 const PARENT_ORIGIN: &str = "git@github.com:example/parent.git";
 
 struct TestEnv {
@@ -15,13 +15,13 @@ struct TestEnv {
 
 impl TestEnv {
     /// A parent repo with `PARENT_ORIGIN` as origin, plus a local bare
-    /// repo (`shadow.git`) to clone shadows from.
+    /// repo (`sidecar.git`) to clone sidecars from.
     fn new() -> Self {
         let env = TestEnv {
             root: tempfile::tempdir().unwrap(),
         };
 
-        let src = env.path("shadow-src");
+        let src = env.path("sidecar-src");
         fs::create_dir(&src).unwrap();
         git(&src, &["init", "-q"]);
         git(
@@ -45,7 +45,7 @@ impl TestEnv {
                 "-q",
                 "--bare",
                 src.to_str().unwrap(),
-                env.shadow_remote().to_str().unwrap(),
+                env.sidecar_remote().to_str().unwrap(),
             ],
         );
 
@@ -65,10 +65,10 @@ impl TestEnv {
         self.path("parent")
     }
 
-    /// Local bare repo used as the shadow's remote; derives the default
-    /// nickname "shadow".
-    fn shadow_remote(&self) -> PathBuf {
-        self.path("shadow.git")
+    /// Local bare repo used as the sidecar's remote; derives the default
+    /// nickname "sidecar".
+    fn sidecar_remote(&self) -> PathBuf {
+        self.path("sidecar.git")
     }
 
     /// Runs the binary in `dir` with the config directory redirected into
@@ -102,7 +102,7 @@ impl TestEnv {
         #[cfg(not(target_os = "macos"))]
         let base = self.path("config-home");
 
-        base.join("git-shadow")
+        base.join("git-sidecar")
             .join("github.com")
             .join("example")
             .join("parent")
@@ -148,7 +148,7 @@ fn no_arguments_prints_usage() {
     let output = env.run(&[]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("Usage: git shadow"));
+    assert!(stderr(&output).contains("Usage: git sidecar"));
 }
 
 #[test]
@@ -165,24 +165,24 @@ fn help_flag_documents_the_subcommands() {
 }
 
 #[test]
-fn shadow_name_without_git_command_prints_usage() {
+fn sidecar_name_without_git_command_prints_usage() {
     let env = TestEnv::new();
 
     let output = env.run(&["lonely-name"]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("usage: git shadow <shadow-name> <git-command>"));
+    assert!(stderr(&output).contains("usage: git sidecar <sidecar-name> <git-command>"));
 }
 
 #[test]
-fn list_without_config_reports_no_shadows() {
+fn list_without_config_reports_no_sidecars() {
     let env = TestEnv::new();
 
     let output = env.run(&["list"]);
 
     assert!(output.status.success());
     assert!(
-        stdout(&output).contains("no shadows configured for git@github.com:example/parent.git")
+        stdout(&output).contains("no sidecars configured for git@github.com:example/parent.git")
     );
 }
 
@@ -197,33 +197,33 @@ fn list_rejects_unknown_flags() {
 }
 
 #[test]
-fn clone_registers_shadow_and_updates_exclude() {
+fn clone_registers_sidecar_and_updates_exclude() {
     let env = TestEnv::new();
 
-    let output = env.run(&["clone", env.shadow_remote().to_str().unwrap()]);
+    let output = env.run(&["clone", env.sidecar_remote().to_str().unwrap()]);
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let out = stdout(&output);
-    assert!(out.contains("registered shadow 'shadow'"));
-    assert!(out.contains("added '/shadow/'"));
+    assert!(out.contains("registered sidecar 'sidecar'"));
+    assert!(out.contains("added '/sidecar/'"));
 
     let config = fs::read_to_string(env.config_file()).unwrap();
     assert!(config.contains("version = 1"));
-    assert!(config.contains("[shadows.shadow]"));
-    assert!(config.contains("mapping = \"shadow/\""));
+    assert!(config.contains("[sidecars.sidecar]"));
+    assert!(config.contains("mapping = \"sidecar/\""));
 
     let exclude = fs::read_to_string(env.exclude_file()).unwrap();
-    assert!(exclude.contains("# >>> git-shadow (managed) >>>"));
-    assert!(exclude.contains("/shadow/"));
+    assert!(exclude.contains("# >>> git-sidecar (managed) >>>"));
+    assert!(exclude.contains("/sidecar/"));
 
-    assert!(env.parent().join("shadow").join(".git").exists());
-    assert_eq!(parent_status(&env), "", "shadow dir must be excluded");
+    assert!(env.parent().join("sidecar").join(".git").exists());
+    assert_eq!(parent_status(&env), "", "sidecar dir must be excluded");
 }
 
 #[test]
 fn clone_refuses_duplicate_nickname() {
     let env = TestEnv::new();
-    let remote = env.shadow_remote();
+    let remote = env.sidecar_remote();
 
     assert!(
         env.run(&["clone", remote.to_str().unwrap()])
@@ -233,7 +233,7 @@ fn clone_refuses_duplicate_nickname() {
     let output = env.run(&["clone", remote.to_str().unwrap()]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("shadow 'shadow' already exists"));
+    assert!(stderr(&output).contains("sidecar 'sidecar' already exists"));
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn clone_refuses_non_empty_target_directory() {
 
     let output = env.run(&[
         "clone",
-        env.shadow_remote().to_str().unwrap(),
+        env.sidecar_remote().to_str().unwrap(),
         "busy",
         "--name",
         "busy",
@@ -266,7 +266,7 @@ fn clone_from_subdirectory_stores_mapping_relative_to_repo_root() {
         &sub,
         &[
             "clone",
-            env.shadow_remote().to_str().unwrap(),
+            env.sidecar_remote().to_str().unwrap(),
             "vendor/fb",
             "--name",
             "fb",
@@ -280,10 +280,10 @@ fn clone_from_subdirectory_stores_mapping_relative_to_repo_root() {
 }
 
 #[test]
-fn list_shows_registered_shadows() {
+fn list_shows_registered_sidecars() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
@@ -292,35 +292,35 @@ fn list_shows_registered_shadows() {
 
     assert!(output.status.success());
     let out = stdout(&output);
-    assert!(out.contains("shadow"));
-    assert!(out.contains("shadow/"));
+    assert!(out.contains("sidecar"));
+    assert!(out.contains("sidecar/"));
 }
 
 #[test]
-fn sync_clones_missing_shadow_and_restores_exclude() {
+fn sync_clones_missing_sidecar_and_restores_exclude() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
-    fs::remove_dir_all(env.parent().join("shadow")).unwrap();
+    fs::remove_dir_all(env.parent().join("sidecar")).unwrap();
     fs::remove_file(env.exclude_file()).unwrap();
 
     let output = env.run(&["sync"]);
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stdout(&output).contains("shadow: cloning"));
-    assert!(env.parent().join("shadow").join(".git").exists());
+    assert!(stdout(&output).contains("sidecar: cloning"));
+    assert!(env.parent().join("sidecar").join(".git").exists());
     let exclude = fs::read_to_string(env.exclude_file()).unwrap();
-    assert!(exclude.contains("/shadow/"));
+    assert!(exclude.contains("/sidecar/"));
 }
 
 #[test]
-fn sync_reports_present_shadows_and_is_idempotent() {
+fn sync_reports_present_sidecars_and_is_idempotent() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
@@ -329,7 +329,7 @@ fn sync_reports_present_shadows_and_is_idempotent() {
 
     assert!(output.status.success());
     let out = stdout(&output);
-    assert!(out.contains("shadow: already present"));
+    assert!(out.contains("sidecar: already present"));
     assert!(!out.contains("updated exclude entries"));
 }
 
@@ -337,11 +337,11 @@ fn sync_reports_present_shadows_and_is_idempotent() {
 fn sync_warns_and_fails_on_non_repo_mapping() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
-    let dir = env.parent().join("shadow");
+    let dir = env.parent().join("sidecar");
     fs::remove_dir_all(&dir).unwrap();
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("unrelated.txt"), "").unwrap();
@@ -356,41 +356,41 @@ fn sync_warns_and_fails_on_non_repo_mapping() {
 fn remove_unregisters_but_keeps_directory() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
 
-    let output = env.run(&["remove", "shadow"]);
+    let output = env.run(&["remove", "sidecar"]);
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let config = fs::read_to_string(env.config_file()).unwrap();
-    assert!(!config.contains("[shadows.shadow]"));
+    assert!(!config.contains("[sidecars.sidecar]"));
     let exclude = fs::read_to_string(env.exclude_file()).unwrap();
-    assert!(!exclude.contains("/shadow/"));
-    assert!(env.parent().join("shadow").join(".git").exists());
+    assert!(!exclude.contains("/sidecar/"));
+    assert!(env.parent().join("sidecar").join(".git").exists());
 }
 
 #[test]
 fn rm_alias_with_delete_removes_directory() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
 
-    let output = env.run(&["rm", "shadow", "--delete"]);
+    let output = env.run(&["rm", "sidecar", "--delete"]);
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(!env.parent().join("shadow").exists());
+    assert!(!env.parent().join("sidecar").exists());
 }
 
 #[test]
-fn remove_unknown_shadow_fails() {
+fn remove_unknown_sidecar_fails() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
@@ -398,35 +398,35 @@ fn remove_unknown_shadow_fails() {
     let output = env.run(&["remove", "nope"]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("shadow 'nope' not found"));
+    assert!(stderr(&output).contains("sidecar 'nope' not found"));
 }
 
 #[test]
-fn passthrough_runs_git_inside_the_shadow() {
+fn passthrough_runs_git_inside_the_sidecar() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
 
-    let output = env.run(&["shadow", "rev-parse", "--show-toplevel"]);
+    let output = env.run(&["sidecar", "rev-parse", "--show-toplevel"]);
 
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let toplevel = PathBuf::from(stdout(&output).trim().to_string());
     assert_eq!(
         toplevel.file_name().unwrap().to_str().unwrap(),
-        "shadow",
-        "git must run inside the shadow repo, got {}",
+        "sidecar",
+        "git must run inside the sidecar repo, got {}",
         toplevel.display()
     );
 }
 
 #[test]
-fn passthrough_fails_for_unknown_shadow() {
+fn passthrough_fails_for_unknown_sidecar() {
     let env = TestEnv::new();
     assert!(
-        env.run(&["clone", env.shadow_remote().to_str().unwrap()])
+        env.run(&["clone", env.sidecar_remote().to_str().unwrap()])
             .status
             .success()
     );
@@ -434,5 +434,5 @@ fn passthrough_fails_for_unknown_shadow() {
     let output = env.run(&["nope", "status"]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("shadow 'nope' not found"));
+    assert!(stderr(&output).contains("sidecar 'nope' not found"));
 }

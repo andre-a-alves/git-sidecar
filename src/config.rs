@@ -8,23 +8,23 @@ use crate::git::{nearest_git_repo, remote_origin_url};
 use crate::paths::is_portable_relative_path;
 use crate::remote::normalize_remote_url;
 
-pub const CONFIG_DIR_NAME: &str = "git-shadow";
+pub const CONFIG_DIR_NAME: &str = "git-sidecar";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 pub const CONFIG_VERSION: u32 = 1;
 pub const RESERVED_NICKNAMES: [&str; 6] = ["list", "sync", "clone", "remove", "rm", "help"];
 
-/// Parsed representation of a v1 git-shadow config file.
+/// Parsed representation of a v1 git-sidecar config file.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub shadows: HashMap<String, Shadow>,
+    pub sidecars: HashMap<String, Sidecar>,
 }
 
-/// A single shadow entry from the v1 config.
+/// A single sidecar entry from the v1 config.
 #[derive(Debug, Deserialize)]
-pub struct Shadow {
-    /// Remote URL for the shadow repository.
+pub struct Sidecar {
+    /// Remote URL for the sidecar repository.
     pub repo: String,
-    /// Path to the shadow git repository, relative to the parent repo root.
+    /// Path to the sidecar git repository, relative to the parent repo root.
     pub mapping: String,
 }
 
@@ -32,7 +32,7 @@ pub struct Shadow {
 struct RawConfig {
     version: Option<u32>,
     #[serde(default)]
-    shadows: HashMap<String, Shadow>,
+    sidecars: HashMap<String, Sidecar>,
 }
 
 /// Everything needed to work with the current parent repo: its root, its
@@ -142,41 +142,41 @@ pub fn parse_config(content: &str) -> Result<Config, String> {
         ));
     }
 
-    for (nickname, shadow) in &raw.shadows {
+    for (nickname, sidecar) in &raw.sidecars {
         if nickname.trim().is_empty() {
-            return Err("shadow nickname cannot be empty".to_string());
+            return Err("sidecar nickname cannot be empty".to_string());
         }
         if RESERVED_NICKNAMES.contains(&nickname.as_str()) {
-            return Err(format!("shadow nickname '{nickname}' is reserved"));
+            return Err(format!("sidecar nickname '{nickname}' is reserved"));
         }
-        if shadow.repo.trim().is_empty() {
-            return Err(format!("shadow '{nickname}' has an empty repo"));
+        if sidecar.repo.trim().is_empty() {
+            return Err(format!("sidecar '{nickname}' has an empty repo"));
         }
-        if shadow.mapping.trim().is_empty() {
-            return Err(format!("shadow '{nickname}' has an empty mapping"));
+        if sidecar.mapping.trim().is_empty() {
+            return Err(format!("sidecar '{nickname}' has an empty mapping"));
         }
-        if !is_portable_relative_path(&shadow.mapping) {
-            return Err(format!("shadow '{nickname}' mapping must be relative"));
+        if !is_portable_relative_path(&sidecar.mapping) {
+            return Err(format!("sidecar '{nickname}' mapping must be relative"));
         }
     }
 
     Ok(Config {
-        shadows: raw.shadows,
+        sidecars: raw.sidecars,
     })
 }
 
-pub fn shadow_config_snippet(name: &str, repo: &str, mapping: &str) -> String {
+pub fn sidecar_config_snippet(name: &str, repo: &str, mapping: &str) -> String {
     format!(
-        "[shadows.{}]\nrepo = {}\nmapping = {}\n",
+        "[sidecars.{}]\nrepo = {}\nmapping = {}\n",
         toml_key(name),
         toml_string(repo),
         toml_string(mapping)
     )
 }
 
-/// Appends a shadow snippet to an existing config's text (preserving
+/// Appends a sidecar snippet to an existing config's text (preserving
 /// whatever formatting it has), or starts a fresh v1 config.
-pub fn config_with_shadow(existing: Option<&str>, snippet: &str) -> String {
+pub fn config_with_sidecar(existing: Option<&str>, snippet: &str) -> String {
     match existing {
         Some(content) => {
             let mut out = content.trim_end().to_string();
@@ -190,22 +190,24 @@ pub fn config_with_shadow(existing: Option<&str>, snippet: &str) -> String {
     }
 }
 
-/// Removes a shadow's table from the config's text, preserving everything
+/// Removes a sidecar's table from the config's text, preserving everything
 /// else. Fails if the table's header cannot be located textually.
-pub fn config_without_shadow(content: &str, name: &str) -> Result<String, String> {
+pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, String> {
     let lines: Vec<&str> = content.lines().collect();
 
     let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
     let header_forms = [
-        format!("[shadows.{name}]"),
-        format!("[shadows.\"{escaped}\"]"),
-        format!("[shadows.'{name}']"),
+        format!("[sidecars.{name}]"),
+        format!("[sidecars.\"{escaped}\"]"),
+        format!("[sidecars.'{name}']"),
     ];
     let start = lines
         .iter()
         .position(|line| header_forms.iter().any(|form| line.trim() == form))
         .ok_or_else(|| {
-            format!("could not locate the [shadows.{name}] entry in the config; remove it manually")
+            format!(
+                "could not locate the [sidecars.{name}] entry in the config; remove it manually"
+            )
         })?;
     let end = lines[start + 1..]
         .iter()
@@ -247,7 +249,7 @@ fn toml_key(key: &str) -> String {
 pub const EXAMPLE_TOML: &str = r#"
 version = 1
 
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = ".test/"
 "#;
@@ -259,25 +261,25 @@ mod tests {
     #[test]
     fn parses_config() {
         let config = parse_config(EXAMPLE_TOML).unwrap();
-        assert_eq!(config.shadows.len(), 1);
+        assert_eq!(config.sidecars.len(), 1);
 
-        let shadow = config.shadows.get("cardlet").unwrap();
-        assert_eq!(shadow.repo, "git@github.com:andre-a-alves/cardlet.git");
-        assert_eq!(shadow.mapping, ".test/");
+        let sidecar = config.sidecars.get("cardlet").unwrap();
+        assert_eq!(sidecar.repo, "git@github.com:andre-a-alves/cardlet.git");
+        assert_eq!(sidecar.mapping, ".test/");
     }
 
     #[test]
-    fn finds_shadow_by_nickname() {
+    fn finds_sidecar_by_nickname() {
         let config = parse_config(EXAMPLE_TOML).unwrap();
-        assert!(config.shadows.contains_key("cardlet"));
-        assert!(!config.shadows.contains_key("nonexistent"));
+        assert!(config.sidecars.contains_key("cardlet"));
+        assert!(!config.sidecars.contains_key("nonexistent"));
     }
 
     #[test]
     fn missing_version_is_an_error() {
         let err = parse_config(
             r#"
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = ".test/"
 "#,
@@ -293,7 +295,7 @@ mapping = ".test/"
             r#"
 version = 2
 
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = ".test/"
 "#,
@@ -304,51 +306,51 @@ mapping = ".test/"
     }
 
     #[test]
-    fn empty_shadow_repo_is_an_error() {
+    fn empty_sidecar_repo_is_an_error() {
         let err = parse_config(
             r#"
 version = 1
 
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = ""
 mapping = ".test/"
 "#,
         )
         .unwrap_err();
 
-        assert!(err.contains("shadow 'cardlet' has an empty repo"));
+        assert!(err.contains("sidecar 'cardlet' has an empty repo"));
     }
 
     #[test]
-    fn absolute_shadow_mapping_is_an_error() {
+    fn absolute_sidecar_mapping_is_an_error() {
         let err = parse_config(
             r#"
 version = 1
 
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = "/tmp/cardlet"
 "#,
         )
         .unwrap_err();
 
-        assert!(err.contains("shadow 'cardlet' mapping must be relative"));
+        assert!(err.contains("sidecar 'cardlet' mapping must be relative"));
     }
 
     #[test]
-    fn windows_absolute_shadow_mapping_is_an_error() {
+    fn windows_absolute_sidecar_mapping_is_an_error() {
         let err = parse_config(
             r#"
 version = 1
 
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = "git@github.com:andre-a-alves/cardlet.git"
 mapping = "C:\\tmp\\cardlet"
 "#,
         )
         .unwrap_err();
 
-        assert!(err.contains("shadow 'cardlet' mapping must be relative"));
+        assert!(err.contains("sidecar 'cardlet' mapping must be relative"));
     }
 
     #[test]
@@ -358,111 +360,111 @@ mapping = "C:\\tmp\\cardlet"
                 r#"
 version = 1
 
-[shadows.{nickname}]
+[sidecars.{nickname}]
 repo = "git@github.com:example/x.git"
 mapping = ".vendor/x/"
 "#
             ))
             .unwrap_err();
 
-            assert!(err.contains(&format!("shadow nickname '{nickname}' is reserved")));
+            assert!(err.contains(&format!("sidecar nickname '{nickname}' is reserved")));
         }
     }
 
     #[test]
-    fn version_only_config_parses_with_no_shadows() {
+    fn version_only_config_parses_with_no_sidecars() {
         let config = parse_config("version = 1\n").unwrap();
-        assert!(config.shadows.is_empty());
+        assert!(config.sidecars.is_empty());
     }
 
     #[test]
-    fn resolves_config_path_under_git_shadow_dir() {
-        let path = config_path_for_origin("git@github.com:andre-a-alves/git-shadow.git").unwrap();
-        assert!(path.ends_with("git-shadow/github.com/andre-a-alves/git-shadow/config.toml"));
+    fn resolves_config_path_under_git_sidecar_dir() {
+        let path = config_path_for_origin("git@github.com:andre-a-alves/git-sidecar.git").unwrap();
+        assert!(path.ends_with("git-sidecar/github.com/andre-a-alves/git-sidecar/config.toml"));
     }
 
     #[test]
-    fn new_config_with_shadow_parses() {
+    fn new_config_with_sidecar_parses() {
         let snippet =
-            shadow_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
-        let content = config_with_shadow(None, &snippet);
+            sidecar_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let content = config_with_sidecar(None, &snippet);
 
         let config = parse_config(&content).unwrap();
-        let shadow = config.shadows.get("foobar").unwrap();
-        assert_eq!(shadow.repo, "git@github.com:example/foobar.git");
-        assert_eq!(shadow.mapping, "foobar/");
+        let sidecar = config.sidecars.get("foobar").unwrap();
+        assert_eq!(sidecar.repo, "git@github.com:example/foobar.git");
+        assert_eq!(sidecar.mapping, "foobar/");
     }
 
     #[test]
-    fn appended_config_keeps_existing_shadows() {
+    fn appended_config_keeps_existing_sidecars() {
         let snippet =
-            shadow_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
-        let content = config_with_shadow(Some(EXAMPLE_TOML), &snippet);
+            sidecar_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let content = config_with_sidecar(Some(EXAMPLE_TOML), &snippet);
 
         let config = parse_config(&content).unwrap();
-        assert_eq!(config.shadows.len(), 2);
-        assert!(config.shadows.contains_key("cardlet"));
-        assert!(config.shadows.contains_key("foobar"));
+        assert_eq!(config.sidecars.len(), 2);
+        assert!(config.sidecars.contains_key("cardlet"));
+        assert!(config.sidecars.contains_key("foobar"));
     }
 
     #[test]
     fn config_snippet_escapes_special_characters() {
-        let snippet = shadow_config_snippet("has spaces", "url\"with\"quotes", "dir/");
-        let content = config_with_shadow(None, &snippet);
+        let snippet = sidecar_config_snippet("has spaces", "url\"with\"quotes", "dir/");
+        let content = config_with_sidecar(None, &snippet);
 
         let config = parse_config(&content).unwrap();
-        let shadow = config.shadows.get("has spaces").unwrap();
-        assert_eq!(shadow.repo, "url\"with\"quotes");
+        let sidecar = config.sidecars.get("has spaces").unwrap();
+        assert_eq!(sidecar.repo, "url\"with\"quotes");
     }
 
     #[test]
-    fn removes_shadow_table_and_keeps_the_rest() {
+    fn removes_sidecar_table_and_keeps_the_rest() {
         let content = "\
 version = 1
 
 # keep me
-[shadows.cardlet]
+[sidecars.cardlet]
 repo = \"git@github.com:andre-a-alves/cardlet.git\"
 mapping = \".test/\"
 
-[shadows.foobar]
+[sidecars.foobar]
 repo = \"git@github.com:example/foobar.git\"
 mapping = \".vendor/foobar/\"
 ";
 
-        let out = config_without_shadow(content, "cardlet").unwrap();
+        let out = config_without_sidecar(content, "cardlet").unwrap();
         let config = parse_config(&out).unwrap();
 
-        assert_eq!(config.shadows.len(), 1);
-        assert!(config.shadows.contains_key("foobar"));
+        assert_eq!(config.sidecars.len(), 1);
+        assert!(config.sidecars.contains_key("foobar"));
         assert!(out.contains("# keep me"));
         assert!(!out.contains("cardlet"));
     }
 
     #[test]
-    fn removes_last_shadow_leaving_version_only() {
-        let out = config_without_shadow(EXAMPLE_TOML, "cardlet").unwrap();
+    fn removes_last_sidecar_leaving_version_only() {
+        let out = config_without_sidecar(EXAMPLE_TOML, "cardlet").unwrap();
 
         assert_eq!(out.trim(), "version = 1");
         let config = parse_config(&out).unwrap();
-        assert!(config.shadows.is_empty());
+        assert!(config.sidecars.is_empty());
     }
 
     #[test]
-    fn removes_quoted_key_shadow_table() {
-        let snippet = shadow_config_snippet("has spaces", "url", "dir/");
-        let content = config_with_shadow(Some(EXAMPLE_TOML), &snippet);
+    fn removes_quoted_key_sidecar_table() {
+        let snippet = sidecar_config_snippet("has spaces", "url", "dir/");
+        let content = config_with_sidecar(Some(EXAMPLE_TOML), &snippet);
 
-        let out = config_without_shadow(&content, "has spaces").unwrap();
+        let out = config_without_sidecar(&content, "has spaces").unwrap();
         let config = parse_config(&out).unwrap();
 
-        assert_eq!(config.shadows.len(), 1);
-        assert!(config.shadows.contains_key("cardlet"));
+        assert_eq!(config.sidecars.len(), 1);
+        assert!(config.sidecars.contains_key("cardlet"));
     }
 
     #[test]
-    fn unlocatable_shadow_table_is_an_error() {
-        let err = config_without_shadow(EXAMPLE_TOML, "missing").unwrap_err();
+    fn unlocatable_sidecar_table_is_an_error() {
+        let err = config_without_sidecar(EXAMPLE_TOML, "missing").unwrap_err();
         assert!(err.contains("remove it manually"));
     }
 }

@@ -1,36 +1,36 @@
 use std::path::Path;
 use std::process::{self, ExitCode};
 
-use crate::config::{RepoContext, Shadow, read_config};
+use crate::config::{RepoContext, Sidecar, read_config};
 use crate::exclude::ensure_mappings_excluded;
 use crate::git::remote_origin_url;
 use crate::remote::same_remote;
 
 pub fn run(target: Option<&str>) -> ExitCode {
-    match sync_shadows(target) {
+    match sync_sidecars(target) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {
-            eprintln!("git-shadow: {e}");
+            eprintln!("git-sidecar: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Syncs shadows for the current repo, cloning any that are not present.
-/// Returns Ok(true) when every selected shadow is present or was cloned.
-fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
+/// Syncs sidecars for the current repo, cloning any that are not present.
+/// Returns Ok(true) when every selected sidecar is present or was cloned.
+fn sync_sidecars(target: Option<&str>) -> Result<bool, String> {
     let ctx = RepoContext::discover()?;
 
     if !ctx.config_path.exists() {
         if let Some(name) = target {
             return Err(format!(
-                "shadow '{name}' not found; no config at {}",
+                "sidecar '{name}' not found; no config at {}",
                 ctx.config_path.display()
             ));
         }
         println!(
-            "no shadows configured for {} ({})",
+            "no sidecars configured for {} ({})",
             ctx.origin_url,
             ctx.config_path.display()
         );
@@ -39,8 +39,8 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
 
     let config = read_config(&ctx.config_path)?;
 
-    let mut selected: Vec<(&String, &Shadow)> = config
-        .shadows
+    let mut selected: Vec<(&String, &Sidecar)> = config
+        .sidecars
         .iter()
         .filter(|(name, _)| target.is_none_or(|t| t == name.as_str()))
         .collect();
@@ -49,12 +49,12 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
     if selected.is_empty() {
         if let Some(name) = target {
             return Err(format!(
-                "shadow '{name}' not found in {}",
+                "sidecar '{name}' not found in {}",
                 ctx.config_path.display()
             ));
         }
         println!(
-            "no shadows configured for {} ({})",
+            "no sidecars configured for {} ({})",
             ctx.origin_url,
             ctx.config_path.display()
         );
@@ -63,13 +63,13 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
 
     let mut all_ok = true;
     let mut present_mappings: Vec<&str> = Vec::new();
-    for (name, shadow) in selected {
-        let outcome = sync_shadow(name, shadow, &ctx.parent_repo);
+    for (name, sidecar) in selected {
+        let outcome = sync_sidecar(name, sidecar, &ctx.parent_repo);
         if !outcome.ok {
             all_ok = false;
         }
         if outcome.present {
-            present_mappings.push(&shadow.mapping);
+            present_mappings.push(&sidecar.mapping);
         }
     }
 
@@ -79,7 +79,7 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
         }
         Ok(None) => {}
         Err(e) => {
-            eprintln!("git-shadow: warning: failed to update git exclude: {e}");
+            eprintln!("git-sidecar: warning: failed to update git exclude: {e}");
             all_ok = false;
         }
     }
@@ -87,22 +87,22 @@ fn sync_shadows(target: Option<&str>) -> Result<bool, String> {
     Ok(all_ok)
 }
 
-/// Result of processing one shadow during sync: whether it completed
+/// Result of processing one sidecar during sync: whether it completed
 /// cleanly, and whether a git repository now exists at its mapping.
 struct SyncOutcome {
     ok: bool,
     present: bool,
 }
 
-fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
-    let shadow_dir = parent_repo.join(&shadow.mapping);
+fn sync_sidecar(name: &str, sidecar: &Sidecar, parent_repo: &Path) -> SyncOutcome {
+    let sidecar_dir = parent_repo.join(&sidecar.mapping);
 
-    match sync_action(&shadow_dir) {
+    match sync_action(&sidecar_dir) {
         SyncAction::Clone => {
-            println!("{name}: cloning {} into {}", shadow.repo, shadow.mapping);
+            println!("{name}: cloning {} into {}", sidecar.repo, sidecar.mapping);
             let status = process::Command::new("git")
-                .args(["clone", &shadow.repo])
-                .arg(&shadow_dir)
+                .args(["clone", &sidecar.repo])
+                .arg(&sidecar_dir)
                 .status();
             match status {
                 Ok(status) if status.success() => SyncOutcome {
@@ -110,14 +110,14 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
                     present: true,
                 },
                 Ok(_) => {
-                    eprintln!("git-shadow: {name}: git clone failed");
+                    eprintln!("git-sidecar: {name}: git clone failed");
                     SyncOutcome {
                         ok: false,
                         present: false,
                     }
                 }
                 Err(e) => {
-                    eprintln!("git-shadow: {name}: failed to run git clone: {e}");
+                    eprintln!("git-sidecar: {name}: failed to run git clone: {e}");
                     SyncOutcome {
                         ok: false,
                         present: false,
@@ -125,11 +125,11 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
                 }
             }
         }
-        SyncAction::AlreadyPresent => match remote_origin_url(&shadow_dir) {
-            Ok(actual) if !same_remote(&actual, &shadow.repo) => {
+        SyncAction::AlreadyPresent => match remote_origin_url(&sidecar_dir) {
+            Ok(actual) if !same_remote(&actual, &sidecar.repo) => {
                 eprintln!(
-                    "git-shadow: warning: {name}: origin is {actual}, config says {}",
-                    shadow.repo
+                    "git-sidecar: warning: {name}: origin is {actual}, config says {}",
+                    sidecar.repo
                 );
                 SyncOutcome {
                     ok: false,
@@ -145,8 +145,8 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
             }
             Err(_) => {
                 eprintln!(
-                    "git-shadow: warning: {name}: existing repo in {} has no readable origin",
-                    shadow.mapping
+                    "git-sidecar: warning: {name}: existing repo in {} has no readable origin",
+                    sidecar.mapping
                 );
                 SyncOutcome {
                     ok: false,
@@ -156,8 +156,8 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
         },
         SyncAction::NotARepo => {
             eprintln!(
-                "git-shadow: warning: {name}: mapping '{}' exists but is not a git repository; skipping",
-                shadow.mapping
+                "git-sidecar: warning: {name}: mapping '{}' exists but is not a git repository; skipping",
+                sidecar.mapping
             );
             SyncOutcome {
                 ok: false,
@@ -166,8 +166,8 @@ fn sync_shadow(name: &str, shadow: &Shadow, parent_repo: &Path) -> SyncOutcome {
         }
         SyncAction::NotADirectory => {
             eprintln!(
-                "git-shadow: warning: {name}: mapping '{}' exists but is not a directory; skipping",
-                shadow.mapping
+                "git-sidecar: warning: {name}: mapping '{}' exists but is not a directory; skipping",
+                sidecar.mapping
             );
             SyncOutcome {
                 ok: false,

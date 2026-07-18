@@ -2,26 +2,30 @@ use std::process::{self, ExitCode};
 
 use crate::commands::sync::{SyncAction, sync_action};
 use crate::config::{
-    RESERVED_NICKNAMES, RepoContext, config_with_shadow, parse_config, shadow_config_snippet,
+    RESERVED_NICKNAMES, RepoContext, config_with_sidecar, parse_config, sidecar_config_snippet,
 };
 use crate::exclude::{ensure_mappings_excluded, exclude_entry};
 use crate::paths::relative_mapping;
 use crate::remote::repo_name_from_url;
 
 pub fn run(repo: &str, directory: Option<String>, name: Option<String>) -> ExitCode {
-    match clone_shadow(repo, directory, name) {
+    match clone_sidecar(repo, directory, name) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("git-shadow: {e}");
+            eprintln!("git-sidecar: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Clones a new shadow repo and registers it in the parent repo's config,
+/// Clones a new sidecar repo and registers it in the parent repo's config,
 /// creating the config file if it does not exist yet. Refuses to touch
 /// anything on nickname/mapping conflicts or a non-empty target directory.
-fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> Result<(), String> {
+fn clone_sidecar(
+    repo: &str,
+    directory: Option<String>,
+    name: Option<String>,
+) -> Result<(), String> {
     let ctx = RepoContext::discover()?;
 
     let nickname = match name {
@@ -29,10 +33,10 @@ fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> 
         None => repo_name_from_url(repo)?,
     };
     if nickname.trim().is_empty() {
-        return Err("shadow nickname cannot be empty".to_string());
+        return Err("sidecar nickname cannot be empty".to_string());
     }
     if RESERVED_NICKNAMES.contains(&nickname.as_str()) {
-        return Err(format!("shadow nickname '{nickname}' is reserved"));
+        return Err(format!("sidecar nickname '{nickname}' is reserved"));
     }
 
     let dir = match directory {
@@ -55,16 +59,16 @@ fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> 
         let config = parse_config(content)
             .map_err(|e| format!("failed to parse {}: {e}", ctx.config_path.display()))?;
 
-        if config.shadows.contains_key(&nickname) {
+        if config.sidecars.contains_key(&nickname) {
             return Err(format!(
-                "shadow '{nickname}' already exists in {}",
+                "sidecar '{nickname}' already exists in {}",
                 ctx.config_path.display()
             ));
         }
-        for (other, shadow) in &config.shadows {
-            if shadow.mapping.trim_end_matches('/') == mapping.trim_end_matches('/') {
+        for (other, sidecar) in &config.sidecars {
+            if sidecar.mapping.trim_end_matches('/') == mapping.trim_end_matches('/') {
                 return Err(format!(
-                    "mapping '{mapping}' is already used by shadow '{other}'"
+                    "mapping '{mapping}' is already used by sidecar '{other}'"
                 ));
             }
         }
@@ -89,8 +93,8 @@ fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> 
         }
     }
 
-    let snippet = shadow_config_snippet(&nickname, repo, &mapping);
-    let new_content = config_with_shadow(existing.as_deref(), &snippet);
+    let snippet = sidecar_config_snippet(&nickname, repo, &mapping);
+    let new_content = config_with_sidecar(existing.as_deref(), &snippet);
     parse_config(&new_content).map_err(|e| format!("refusing to write an invalid config: {e}"))?;
 
     println!("{nickname}: cloning {repo} into {mapping}");
@@ -111,7 +115,7 @@ fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> 
         .map_err(|e| format!("failed to write {}: {e}", ctx.config_path.display()))?;
 
     println!(
-        "registered shadow '{nickname}' with mapping '{mapping}' in {}",
+        "registered sidecar '{nickname}' with mapping '{mapping}' in {}",
         ctx.config_path.display()
     );
 
@@ -126,7 +130,7 @@ fn clone_shadow(repo: &str, directory: Option<String>, name: Option<String>) -> 
         Ok(None) => {}
         Err(e) => {
             return Err(format!(
-                "shadow was cloned and registered, but updating git exclude failed: {e}"
+                "sidecar was cloned and registered, but updating git exclude failed: {e}"
             ));
         }
     }

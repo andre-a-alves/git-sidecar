@@ -128,32 +128,32 @@ mod tests {
     #[test]
     fn normalizes_scp_like_ssh_url() {
         assert_eq!(
-            normalize_remote_url("git@github.com:andre-a-alves/git-shadow.git").unwrap(),
-            PathBuf::from("github.com/andre-a-alves/git-shadow")
+            normalize_remote_url("git@github.com:andre-a-alves/git-sidecar.git").unwrap(),
+            PathBuf::from("github.com/andre-a-alves/git-sidecar")
         );
     }
 
     #[test]
     fn normalizes_ssh_scheme_url() {
         assert_eq!(
-            normalize_remote_url("ssh://git@github.com/andre-a-alves/git-shadow.git").unwrap(),
-            PathBuf::from("github.com/andre-a-alves/git-shadow")
+            normalize_remote_url("ssh://git@github.com/andre-a-alves/git-sidecar.git").unwrap(),
+            PathBuf::from("github.com/andre-a-alves/git-sidecar")
         );
     }
 
     #[test]
     fn normalizes_https_url() {
         assert_eq!(
-            normalize_remote_url("https://github.com/andre-a-alves/git-shadow.git").unwrap(),
-            PathBuf::from("github.com/andre-a-alves/git-shadow")
+            normalize_remote_url("https://github.com/andre-a-alves/git-sidecar.git").unwrap(),
+            PathBuf::from("github.com/andre-a-alves/git-sidecar")
         );
     }
 
     #[test]
     fn normalizes_https_url_without_dot_git() {
         assert_eq!(
-            normalize_remote_url("https://github.com/andre-a-alves/git-shadow").unwrap(),
-            PathBuf::from("github.com/andre-a-alves/git-shadow")
+            normalize_remote_url("https://github.com/andre-a-alves/git-sidecar").unwrap(),
+            PathBuf::from("github.com/andre-a-alves/git-sidecar")
         );
     }
 
@@ -175,7 +175,7 @@ mod tests {
     fn same_remote_rejects_different_repos() {
         assert!(!same_remote(
             "git@github.com:andre-a-alves/cardlet.git",
-            "git@github.com:andre-a-alves/git-shadow.git"
+            "git@github.com:andre-a-alves/git-sidecar.git"
         ));
     }
 

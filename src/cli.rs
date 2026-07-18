@@ -2,10 +2,10 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "git-shadow",
-    bin_name = "git shadow",
+    name = "git-sidecar",
+    bin_name = "git sidecar",
     version,
-    about = "Run git commands against shadow repositories that live inside your working directory"
+    about = "Run git commands against sidecar repositories that live inside your working directory"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -14,39 +14,39 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// List the shadows configured for this repo
+    /// List the sidecars configured for this repo
     List {
-        /// List every configured shadow across all repos
+        /// List every configured sidecar across all repos
         #[arg(long)]
         global: bool,
     },
-    /// Clone any configured shadows that are not present
+    /// Clone any configured sidecars that are not present
     Sync {
-        /// Sync only this shadow
+        /// Sync only this sidecar
         name: Option<String>,
     },
-    /// Clone a repo and register it as a shadow of this repo
+    /// Clone a repo and register it as a sidecar of this repo
     Clone {
         /// Remote URL of the repository to clone
         repo: String,
         /// Directory to clone into, relative to the current directory
         /// (defaults to the repository name)
         directory: Option<String>,
-        /// Nickname for the shadow (defaults to the repository name)
+        /// Nickname for the sidecar (defaults to the repository name)
         #[arg(long)]
         name: Option<String>,
     },
-    /// Remove a shadow from the config and exclude file
+    /// Remove a sidecar from the config and exclude file
     #[command(alias = "rm")]
     Remove {
-        /// Nickname of the shadow to remove
+        /// Nickname of the sidecar to remove
         name: String,
-        /// Also delete the shadow's directory
+        /// Also delete the sidecar's directory
         #[arg(long)]
         delete: bool,
     },
-    /// Any other first argument is a shadow nickname: the remaining
-    /// arguments are run as a git command inside that shadow's directory
+    /// Any other first argument is a sidecar nickname: the remaining
+    /// arguments are run as a git command inside that sidecar's directory
     #[command(external_subcommand)]
     Passthrough(Vec<String>),
 }
@@ -56,7 +56,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Command, clap::Error> {
-        Cli::try_parse_from(std::iter::once("git-shadow").chain(args.iter().copied()))
+        Cli::try_parse_from(std::iter::once("git-sidecar").chain(args.iter().copied()))
             .map(|cli| cli.command)
     }
 
