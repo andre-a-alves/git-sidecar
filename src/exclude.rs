@@ -2,15 +2,15 @@ use std::path::{Path, PathBuf};
 
 use crate::git::git_exclude_path;
 
-pub const EXCLUDE_SECTION_START: &str = "# >>> git-shadow (managed) >>>";
-pub const EXCLUDE_SECTION_END: &str = "# <<< git-shadow (managed) <<<";
+pub const EXCLUDE_SECTION_START: &str = "# >>> git-sidecar (managed) >>>";
+pub const EXCLUDE_SECTION_END: &str = "# <<< git-sidecar (managed) <<<";
 
 /// The exclude pattern for a mapping: root-anchored and directory-only.
 pub fn exclude_entry(mapping: &str) -> String {
     format!("/{}/", mapping.trim_matches('/'))
 }
 
-/// Ensures the git-shadow managed section of the parent repo's
+/// Ensures the git-sidecar managed section of the parent repo's
 /// `.git/info/exclude` contains an entry for every given mapping.
 /// Returns the exclude file's path when it was actually rewritten.
 pub fn ensure_mappings_excluded(
@@ -70,7 +70,7 @@ pub fn remove_mapping_exclusion(
     Ok(Some(exclude_path))
 }
 
-/// Adds any missing entries to the git-shadow managed section of an
+/// Adds any missing entries to the git-sidecar managed section of an
 /// exclude file's content, creating the section if needed. Lines outside
 /// the section are never touched. Returns the new content and whether it
 /// differs from the input.
@@ -118,7 +118,7 @@ fn with_excluded_entries(content: &str, entries: &[String]) -> (String, bool) {
     (out, true)
 }
 
-/// Removes an entry from the git-shadow managed section of an exclude
+/// Removes an entry from the git-sidecar managed section of an exclude
 /// file's content. Lines outside the section are never touched.
 fn without_excluded_entry(content: &str, entry: &str) -> (String, bool) {
     let lines: Vec<&str> = content.lines().collect();
@@ -178,7 +178,7 @@ mod tests {
         assert!(changed);
         assert_eq!(
             out,
-            "# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n"
+            "# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n"
         );
     }
 
@@ -189,27 +189,27 @@ mod tests {
         assert!(changed);
         assert_eq!(
             out,
-            "*.log\nbuild/\n\n# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n"
+            "*.log\nbuild/\n\n# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n"
         );
     }
 
     #[test]
     fn adds_missing_entry_to_existing_managed_section() {
         let existing =
-            "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n";
+            "*.log\n\n# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n";
         let (out, changed) =
             with_excluded_entries(existing, &["/foobar/".to_string(), "/fb/".to_string()]);
 
         assert!(changed);
         assert_eq!(
             out,
-            "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n/fb/\n# <<< git-shadow (managed) <<<\n"
+            "*.log\n\n# >>> git-sidecar (managed) >>>\n/foobar/\n/fb/\n# <<< git-sidecar (managed) <<<\n"
         );
     }
 
     #[test]
     fn present_entries_leave_exclude_unchanged() {
-        let existing = "# >>> git-shadow (managed) >>>\n/foobar/\n# <<< git-shadow (managed) <<<\n";
+        let existing = "# >>> git-sidecar (managed) >>>\n/foobar/\n# <<< git-sidecar (managed) <<<\n";
         let (out, changed) = with_excluded_entries(existing, &["/foobar/".to_string()]);
 
         assert!(!changed);
@@ -223,7 +223,7 @@ mod tests {
         let (out, changed) = with_excluded_entries(existing, &["/foobar/".to_string()]);
 
         assert!(changed);
-        assert!(out.starts_with("/foobar/\n\n# >>> git-shadow (managed) >>>\n"));
+        assert!(out.starts_with("/foobar/\n\n# >>> git-sidecar (managed) >>>\n"));
     }
 
     #[test]
@@ -236,19 +236,19 @@ mod tests {
 
     #[test]
     fn removes_entry_from_managed_exclude_section() {
-        let content = "*.log\n\n# >>> git-shadow (managed) >>>\n/foobar/\n/fb/\n# <<< git-shadow (managed) <<<\n";
+        let content = "*.log\n\n# >>> git-sidecar (managed) >>>\n/foobar/\n/fb/\n# <<< git-sidecar (managed) <<<\n";
         let (out, changed) = without_excluded_entry(content, "/foobar/");
 
         assert!(changed);
         assert_eq!(
             out,
-            "*.log\n\n# >>> git-shadow (managed) >>>\n/fb/\n# <<< git-shadow (managed) <<<\n"
+            "*.log\n\n# >>> git-sidecar (managed) >>>\n/fb/\n# <<< git-sidecar (managed) <<<\n"
         );
     }
 
     #[test]
     fn absent_exclude_entry_changes_nothing() {
-        let content = "# >>> git-shadow (managed) >>>\n/fb/\n# <<< git-shadow (managed) <<<\n";
+        let content = "# >>> git-sidecar (managed) >>>\n/fb/\n# <<< git-sidecar (managed) <<<\n";
         let (out, changed) = without_excluded_entry(content, "/foobar/");
 
         assert!(!changed);

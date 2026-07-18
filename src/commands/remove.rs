@@ -1,27 +1,27 @@
 use std::process::ExitCode;
 
-use crate::config::{RepoContext, config_without_shadow, parse_config};
+use crate::config::{RepoContext, config_without_sidecar, parse_config};
 use crate::exclude::{exclude_entry, remove_mapping_exclusion};
 use crate::paths::normalize_lexically;
 
 pub fn run(name: &str, delete: bool) -> ExitCode {
-    match remove_shadow(name, delete) {
+    match remove_sidecar(name, delete) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("git-shadow: {e}");
+            eprintln!("git-sidecar: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Removes a shadow from the config and the exclude file. The mapping
+/// Removes a sidecar from the config and the exclude file. The mapping
 /// directory is left on disk unless `delete` is set.
-fn remove_shadow(name: &str, delete: bool) -> Result<(), String> {
+fn remove_sidecar(name: &str, delete: bool) -> Result<(), String> {
     let ctx = RepoContext::discover()?;
 
     if !ctx.config_path.exists() {
         return Err(format!(
-            "shadow '{name}' not found; no config at {}",
+            "sidecar '{name}' not found; no config at {}",
             ctx.config_path.display()
         ));
     }
@@ -30,25 +30,25 @@ fn remove_shadow(name: &str, delete: bool) -> Result<(), String> {
     let config = parse_config(&content)
         .map_err(|e| format!("failed to parse {}: {e}", ctx.config_path.display()))?;
 
-    let shadow = config
-        .shadows
+    let sidecar = config
+        .sidecars
         .get(name)
-        .ok_or_else(|| format!("shadow '{name}' not found in {}", ctx.config_path.display()))?;
-    let mapping = shadow.mapping.clone();
+        .ok_or_else(|| format!("sidecar '{name}' not found in {}", ctx.config_path.display()))?;
+    let mapping = sidecar.mapping.clone();
 
-    let new_content = config_without_shadow(&content, name)?;
+    let new_content = config_without_sidecar(&content, name)?;
     let new_config = parse_config(&new_content)
         .map_err(|e| format!("refusing to write an invalid config: {e}"))?;
-    if new_config.shadows.len() != config.shadows.len() - 1 || new_config.shadows.contains_key(name)
+    if new_config.sidecars.len() != config.sidecars.len() - 1 || new_config.sidecars.contains_key(name)
     {
         return Err(format!(
-            "refusing to write config: removal would not drop exactly shadow '{name}'"
+            "refusing to write config: removal would not drop exactly sidecar '{name}'"
         ));
     }
 
     std::fs::write(&ctx.config_path, new_content)
         .map_err(|e| format!("failed to write {}: {e}", ctx.config_path.display()))?;
-    println!("removed shadow '{name}' from {}", ctx.config_path.display());
+    println!("removed sidecar '{name}' from {}", ctx.config_path.display());
 
     match remove_mapping_exclusion(&ctx.parent_repo, &mapping) {
         Ok(Some(exclude_path)) => {
@@ -61,7 +61,7 @@ fn remove_shadow(name: &str, delete: bool) -> Result<(), String> {
         Ok(None) => {}
         Err(e) => {
             return Err(format!(
-                "shadow was removed from config, but updating git exclude failed: {e}"
+                "sidecar was removed from config, but updating git exclude failed: {e}"
             ));
         }
     }

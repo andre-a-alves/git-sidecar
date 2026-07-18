@@ -36,7 +36,7 @@ pub fn remote_origin_url(repo: &Path) -> Result<String, String> {
 
     if !output.status.success() {
         return Err(format!(
-            "{} has no remote.origin.url; git-shadow v1 config lookup requires one",
+            "{} has no remote.origin.url; git-sidecar v1 config lookup requires one",
             repo.display()
         ));
     }
@@ -44,7 +44,7 @@ pub fn remote_origin_url(repo: &Path) -> Result<String, String> {
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if url.is_empty() {
         return Err(format!(
-            "{} has an empty remote.origin.url; git-shadow v1 config lookup requires one",
+            "{} has an empty remote.origin.url; git-sidecar v1 config lookup requires one",
             repo.display()
         ));
     }

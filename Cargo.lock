@@ -150,8 +150,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "git-shadow"
-version = "0.0.4"
+name = "git-sidecar"
+version = "0.0.1"
 dependencies = [
  "clap",
  "dunce",

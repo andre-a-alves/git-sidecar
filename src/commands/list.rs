@@ -11,7 +11,7 @@ pub fn run(global: bool) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("git-shadow: {e}");
+            eprintln!("git-sidecar: {e}");
             ExitCode::FAILURE
         }
     }
@@ -22,7 +22,7 @@ fn list_local() -> Result<(), String> {
 
     if !ctx.config_path.exists() {
         println!(
-            "no shadows configured for {} ({})",
+            "no sidecars configured for {} ({})",
             ctx.origin_url,
             ctx.config_path.display()
         );
@@ -30,16 +30,16 @@ fn list_local() -> Result<(), String> {
     }
 
     let config = read_config(&ctx.config_path)?;
-    if config.shadows.is_empty() {
+    if config.sidecars.is_empty() {
         println!(
-            "no shadows configured for {} ({})",
+            "no sidecars configured for {} ({})",
             ctx.origin_url,
             ctx.config_path.display()
         );
         return Ok(());
     }
 
-    for line in format_shadow_rows(&sorted_shadow_rows(&config)) {
+    for line in format_sidecar_rows(&sorted_sidecar_rows(&config)) {
         println!("{line}");
     }
     Ok(())
@@ -50,7 +50,7 @@ fn list_global() -> Result<(), String> {
     let config_files = find_config_files(&root);
 
     if config_files.is_empty() {
-        println!("no shadows configured under {}", root.display());
+        println!("no sidecars configured under {}", root.display());
         return Ok(());
     }
 
@@ -59,7 +59,7 @@ fn list_global() -> Result<(), String> {
         let config = match read_config(&config_path) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("git-shadow: warning: skipping {e}");
+                eprintln!("git-sidecar: warning: skipping {e}");
                 continue;
             }
         };
@@ -78,7 +78,7 @@ fn list_global() -> Result<(), String> {
         first = false;
 
         println!("{label}:");
-        for line in format_shadow_rows(&sorted_shadow_rows(&config)) {
+        for line in format_sidecar_rows(&sorted_sidecar_rows(&config)) {
             println!("  {line}");
         }
     }
@@ -107,17 +107,17 @@ fn collect_config_files(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn sorted_shadow_rows(config: &Config) -> Vec<(&str, &str, &str)> {
+fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str)> {
     let mut rows: Vec<_> = config
-        .shadows
+        .sidecars
         .iter()
-        .map(|(name, shadow)| (name.as_str(), shadow.repo.as_str(), shadow.mapping.as_str()))
+        .map(|(name, sidecar)| (name.as_str(), sidecar.repo.as_str(), sidecar.mapping.as_str()))
         .collect();
     rows.sort_by(|a, b| a.0.cmp(b.0));
     rows
 }
 
-fn format_shadow_rows(rows: &[(&str, &str, &str)]) -> Vec<String> {
+fn format_sidecar_rows(rows: &[(&str, &str, &str)]) -> Vec<String> {
     let name_width = rows
         .iter()
         .map(|(name, _, _)| name.len())
@@ -142,7 +142,7 @@ mod tests {
     use crate::config::parse_config;
 
     #[test]
-    fn formats_shadow_rows_with_aligned_columns() {
+    fn formats_sidecar_rows_with_aligned_columns() {
         let rows = vec![
             (
                 "cardlet",
@@ -152,7 +152,7 @@ mod tests {
             ("fb", "git@github.com:example/foobar.git", ".vendor/foobar/"),
         ];
 
-        let lines = format_shadow_rows(&rows);
+        let lines = format_sidecar_rows(&rows);
 
         assert_eq!(
             lines,
@@ -164,23 +164,23 @@ mod tests {
     }
 
     #[test]
-    fn sorts_shadow_rows_by_nickname() {
+    fn sorts_sidecar_rows_by_nickname() {
         let config = parse_config(
             r#"
 version = 1
 
-[shadows.zeta]
+[sidecars.zeta]
 repo = "git@github.com:example/zeta.git"
 mapping = ".vendor/zeta/"
 
-[shadows.alpha]
+[sidecars.alpha]
 repo = "git@github.com:example/alpha.git"
 mapping = ".vendor/alpha/"
 "#,
         )
         .unwrap();
 
-        let rows = sorted_shadow_rows(&config);
+        let rows = sorted_sidecar_rows(&config);
         assert_eq!(rows[0].0, "alpha");
         assert_eq!(rows[1].0, "zeta");
     }
