@@ -107,7 +107,7 @@ fn collect_config_files(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str)> {
+fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str, &str)> {
     let mut rows: Vec<_> = config
         .sidecars
         .iter()
@@ -116,6 +116,11 @@ fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str)> {
                 name.as_str(),
                 sidecar.repo.as_str(),
                 sidecar.mapping.as_str(),
+                if sidecar.standalone {
+                    "standalone"
+                } else {
+                    "unified"
+                },
             )
         })
         .collect();
@@ -123,21 +128,28 @@ fn sorted_sidecar_rows(config: &Config) -> Vec<(&str, &str, &str)> {
     rows
 }
 
-fn format_sidecar_rows(rows: &[(&str, &str, &str)]) -> Vec<String> {
+fn format_sidecar_rows(rows: &[(&str, &str, &str, &str)]) -> Vec<String> {
     let name_width = rows
         .iter()
-        .map(|(name, _, _)| name.len())
+        .map(|(name, _, _, _)| name.len())
         .max()
         .unwrap_or(0);
     let repo_width = rows
         .iter()
-        .map(|(_, repo, _)| repo.len())
+        .map(|(_, repo, _, _)| repo.len())
+        .max()
+        .unwrap_or(0);
+    let mapping_width = rows
+        .iter()
+        .map(|(_, _, mapping, _)| mapping.len())
         .max()
         .unwrap_or(0);
 
     rows.iter()
-        .map(|(name, repo, mapping)| {
-            format!("{name:<name_width$}   {repo:<repo_width$}   {mapping}")
+        .map(|(name, repo, mapping, layout)| {
+            format!(
+                "{name:<name_width$}   {repo:<repo_width$}   {mapping:<mapping_width$}   {layout}"
+            )
         })
         .collect()
 }
@@ -154,8 +166,14 @@ mod tests {
                 "cardlet",
                 "git@github.com:andre-a-alves/cardlet.git",
                 ".test/",
+                "unified",
             ),
-            ("fb", "git@github.com:example/foobar.git", ".vendor/foobar/"),
+            (
+                "fb",
+                "git@github.com:example/foobar.git",
+                ".vendor/foobar/",
+                "standalone",
+            ),
         ];
 
         let lines = format_sidecar_rows(&rows);
@@ -163,8 +181,8 @@ mod tests {
         assert_eq!(
             lines,
             vec![
-                "cardlet   git@github.com:andre-a-alves/cardlet.git   .test/",
-                "fb        git@github.com:example/foobar.git          .vendor/foobar/",
+                "cardlet   git@github.com:andre-a-alves/cardlet.git   .test/            unified",
+                "fb        git@github.com:example/foobar.git          .vendor/foobar/   standalone",
             ]
         );
     }

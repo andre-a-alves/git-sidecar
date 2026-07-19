@@ -34,27 +34,47 @@ pub fn remote_origin_url(repo: &Path) -> Result<String, String> {
             )
         })?;
 
+    origin_url_from_output(&output, &repo.display().to_string())
+}
+
+/// `remote.origin.url` read directly from a git directory, for repos whose
+/// working tree holds no `.git` entry of its own.
+pub fn remote_origin_url_from_gitdir(gitdir: &Path) -> Result<String, String> {
+    let output = process::Command::new("git")
+        .arg("--git-dir")
+        .arg(gitdir)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .map_err(|e| {
+            format!(
+                "failed to read remote.origin.url for {}: {e}",
+                gitdir.display()
+            )
+        })?;
+
+    origin_url_from_output(&output, &gitdir.display().to_string())
+}
+
+fn origin_url_from_output(output: &process::Output, label: &str) -> Result<String, String> {
     if !output.status.success() {
         return Err(format!(
-            "{} has no remote.origin.url; git-sidecar v1 config lookup requires one",
-            repo.display()
+            "{label} has no remote.origin.url; git-sidecar v1 config lookup requires one"
         ));
     }
 
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if url.is_empty() {
         return Err(format!(
-            "{} has an empty remote.origin.url; git-sidecar v1 config lookup requires one",
-            repo.display()
+            "{label} has an empty remote.origin.url; git-sidecar v1 config lookup requires one"
         ));
     }
 
     Ok(url)
 }
 
-/// Path of the repo's exclude file, honoring worktrees and relocated git
+/// The repo's common git directory, honoring worktrees and relocated git
 /// directories via `git rev-parse --git-common-dir`.
-pub fn git_exclude_path(repo: &Path) -> Result<PathBuf, String> {
+pub fn git_common_dir(repo: &Path) -> Result<PathBuf, String> {
     let output = process::Command::new("git")
         .args(["rev-parse", "--git-common-dir"])
         .current_dir(repo)
@@ -77,10 +97,14 @@ pub fn git_exclude_path(repo: &Path) -> Result<PathBuf, String> {
     }
 
     let git_dir = PathBuf::from(git_dir);
-    let git_dir = if git_dir.is_absolute() {
-        git_dir
+    if git_dir.is_absolute() {
+        Ok(git_dir)
     } else {
-        repo.join(git_dir)
-    };
-    Ok(git_dir.join("info").join("exclude"))
+        Ok(repo.join(git_dir))
+    }
+}
+
+/// Path of the repo's exclude file.
+pub fn git_exclude_path(repo: &Path) -> Result<PathBuf, String> {
+    Ok(git_common_dir(repo)?.join("info").join("exclude"))
 }

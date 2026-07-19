@@ -26,6 +26,11 @@ pub struct Sidecar {
     pub repo: String,
     /// Path to the sidecar git repository, relative to the parent repo root.
     pub mapping: String,
+    /// Whether the sidecar keeps its own `.git` inside the mapping
+    /// directory instead of the unified external git-dir layout. Absent in
+    /// older configs, which defaults to unified.
+    #[serde(default)]
+    pub standalone: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,13 +170,18 @@ pub fn parse_config(content: &str) -> Result<Config, String> {
     })
 }
 
-pub fn sidecar_config_snippet(name: &str, repo: &str, mapping: &str) -> String {
-    format!(
+pub fn sidecar_config_snippet(name: &str, repo: &str, mapping: &str, standalone: bool) -> String {
+    let mut snippet = format!(
         "[sidecars.{}]\nrepo = {}\nmapping = {}\n",
         toml_key(name),
         toml_string(repo),
         toml_string(mapping)
-    )
+    );
+    // Unified is the default; the key is only written when it deviates.
+    if standalone {
+        snippet.push_str("standalone = true\n");
+    }
+    snippet
 }
 
 /// Appends a sidecar snippet to an existing config's text (preserving
@@ -190,11 +200,9 @@ pub fn config_with_sidecar(existing: Option<&str>, snippet: &str) -> String {
     }
 }
 
-/// Removes a sidecar's table from the config's text, preserving everything
-/// else. Fails if the table's header cannot be located textually.
-pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, String> {
-    let lines: Vec<&str> = content.lines().collect();
-
+/// Line range of a sidecar's table in the config text: the header line's
+/// index and the exclusive end (next table header or end of file).
+fn sidecar_table_bounds(lines: &[&str], name: &str) -> Option<(usize, usize)> {
     let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
     let header_forms = [
         format!("[sidecars.{name}]"),
@@ -203,16 +211,22 @@ pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, Strin
     ];
     let start = lines
         .iter()
-        .position(|line| header_forms.iter().any(|form| line.trim() == form))
-        .ok_or_else(|| {
-            format!(
-                "could not locate the [sidecars.{name}] entry in the config; remove it manually"
-            )
-        })?;
+        .position(|line| header_forms.iter().any(|form| line.trim() == form))?;
     let end = lines[start + 1..]
         .iter()
         .position(|line| line.trim_start().starts_with('['))
         .map_or(lines.len(), |offset| start + 1 + offset);
+    Some((start, end))
+}
+
+/// Removes a sidecar's table from the config's text, preserving everything
+/// else. Fails if the table's header cannot be located textually.
+pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, String> {
+    let lines: Vec<&str> = content.lines().collect();
+
+    let (start, end) = sidecar_table_bounds(&lines, name).ok_or_else(|| {
+        format!("could not locate the [sidecars.{name}] entry in the config; remove it manually")
+    })?;
 
     let mut kept: Vec<&str> = Vec::new();
     kept.extend(&lines[..start]);
@@ -226,6 +240,46 @@ pub fn config_without_sidecar(content: &str, name: &str) -> Result<String, Strin
     if out.is_empty() {
         return Ok(String::new());
     }
+    Ok(format!("{out}\n"))
+}
+
+/// Sets or clears a sidecar's `standalone` flag in the config's text,
+/// preserving everything else. Since unified is the default, clearing the
+/// flag removes the key instead of writing `standalone = false`.
+pub fn config_set_standalone(
+    content: &str,
+    name: &str,
+    standalone: bool,
+) -> Result<String, String> {
+    let lines: Vec<&str> = content.lines().collect();
+
+    let (start, end) = sidecar_table_bounds(&lines, name).ok_or_else(|| {
+        format!("could not locate the [sidecars.{name}] entry in the config; edit it manually")
+    })?;
+
+    let mut table: Vec<&str> = lines[start + 1..end]
+        .iter()
+        .filter(|line| match line.split_once('=') {
+            Some((key, _)) => key.trim() != "standalone",
+            None => true,
+        })
+        .copied()
+        .collect();
+    if standalone {
+        let insert_at = table
+            .iter()
+            .rposition(|line| !line.trim().is_empty())
+            .map_or(0, |i| i + 1);
+        table.insert(insert_at, "standalone = true");
+    }
+
+    let mut kept: Vec<&str> = Vec::new();
+    kept.extend(&lines[..=start]);
+    kept.extend(table);
+    kept.extend(&lines[end..]);
+
+    let out = kept.join("\n");
+    let out = out.trim_end_matches('\n');
     Ok(format!("{out}\n"))
 }
 
@@ -385,8 +439,12 @@ mapping = ".vendor/x/"
 
     #[test]
     fn new_config_with_sidecar_parses() {
-        let snippet =
-            sidecar_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let snippet = sidecar_config_snippet(
+            "foobar",
+            "git@github.com:example/foobar.git",
+            "foobar/",
+            false,
+        );
         let content = config_with_sidecar(None, &snippet);
 
         let config = parse_config(&content).unwrap();
@@ -397,8 +455,12 @@ mapping = ".vendor/x/"
 
     #[test]
     fn appended_config_keeps_existing_sidecars() {
-        let snippet =
-            sidecar_config_snippet("foobar", "git@github.com:example/foobar.git", "foobar/");
+        let snippet = sidecar_config_snippet(
+            "foobar",
+            "git@github.com:example/foobar.git",
+            "foobar/",
+            false,
+        );
         let content = config_with_sidecar(Some(EXAMPLE_TOML), &snippet);
 
         let config = parse_config(&content).unwrap();
@@ -409,7 +471,7 @@ mapping = ".vendor/x/"
 
     #[test]
     fn config_snippet_escapes_special_characters() {
-        let snippet = sidecar_config_snippet("has spaces", "url\"with\"quotes", "dir/");
+        let snippet = sidecar_config_snippet("has spaces", "url\"with\"quotes", "dir/", false);
         let content = config_with_sidecar(None, &snippet);
 
         let config = parse_config(&content).unwrap();
@@ -452,7 +514,7 @@ mapping = \".vendor/foobar/\"
 
     #[test]
     fn removes_quoted_key_sidecar_table() {
-        let snippet = sidecar_config_snippet("has spaces", "url", "dir/");
+        let snippet = sidecar_config_snippet("has spaces", "url", "dir/", false);
         let content = config_with_sidecar(Some(EXAMPLE_TOML), &snippet);
 
         let out = config_without_sidecar(&content, "has spaces").unwrap();
@@ -466,5 +528,88 @@ mapping = \".vendor/foobar/\"
     fn unlocatable_sidecar_table_is_an_error() {
         let err = config_without_sidecar(EXAMPLE_TOML, "missing").unwrap_err();
         assert!(err.contains("remove it manually"));
+    }
+
+    #[test]
+    fn missing_standalone_key_defaults_to_unified() {
+        let config = parse_config(EXAMPLE_TOML).unwrap();
+        assert!(!config.sidecars.get("cardlet").unwrap().standalone);
+    }
+
+    #[test]
+    fn standalone_key_is_parsed() {
+        let config = parse_config(
+            r#"
+version = 1
+
+[sidecars.cardlet]
+repo = "git@github.com:andre-a-alves/cardlet.git"
+mapping = ".test/"
+standalone = true
+"#,
+        )
+        .unwrap();
+
+        assert!(config.sidecars.get("cardlet").unwrap().standalone);
+    }
+
+    #[test]
+    fn snippet_writes_standalone_only_when_set() {
+        let unified = sidecar_config_snippet("fb", "url", "fb/", false);
+        assert!(!unified.contains("standalone"));
+
+        let standalone = sidecar_config_snippet("fb", "url", "fb/", true);
+        assert!(standalone.contains("standalone = true"));
+
+        let config = parse_config(&config_with_sidecar(None, &standalone)).unwrap();
+        assert!(config.sidecars.get("fb").unwrap().standalone);
+    }
+
+    #[test]
+    fn set_standalone_adds_the_key_to_the_right_table() {
+        let content = "\
+version = 1
+
+[sidecars.cardlet]
+repo = \"git@github.com:andre-a-alves/cardlet.git\"
+mapping = \".test/\"
+
+[sidecars.foobar]
+repo = \"git@github.com:example/foobar.git\"
+mapping = \".vendor/foobar/\"
+";
+
+        let out = config_set_standalone(content, "cardlet", true).unwrap();
+        let config = parse_config(&out).unwrap();
+
+        assert!(config.sidecars.get("cardlet").unwrap().standalone);
+        assert!(!config.sidecars.get("foobar").unwrap().standalone);
+        // the blank separator line stays where it was
+        assert!(out.contains("standalone = true\n\n[sidecars.foobar]"));
+    }
+
+    #[test]
+    fn clear_standalone_removes_the_key() {
+        let with_flag = config_set_standalone(EXAMPLE_TOML, "cardlet", true).unwrap();
+        assert!(with_flag.contains("standalone = true"));
+
+        let cleared = config_set_standalone(&with_flag, "cardlet", false).unwrap();
+        assert!(!cleared.contains("standalone"));
+        let config = parse_config(&cleared).unwrap();
+        assert!(!config.sidecars.get("cardlet").unwrap().standalone);
+    }
+
+    #[test]
+    fn set_standalone_twice_is_idempotent() {
+        let once = config_set_standalone(EXAMPLE_TOML, "cardlet", true).unwrap();
+        let twice = config_set_standalone(&once, "cardlet", true).unwrap();
+        assert_eq!(once, twice);
+        assert_eq!(twice.matches("standalone").count(), 1);
+    }
+
+    #[test]
+    fn set_standalone_on_missing_sidecar_is_an_error() {
+        let err = config_set_standalone(EXAMPLE_TOML, "missing", true).unwrap_err();
+        assert!(err.contains("edit it manually"));
     }
 }
