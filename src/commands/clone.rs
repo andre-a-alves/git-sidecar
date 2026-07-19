@@ -24,7 +24,7 @@ pub fn run(
     }
 }
 
-fn ensure_target_is_clonable(
+fn ensure_target_is_cloneable(
     nickname: &str,
     target: &std::path::Path,
     gitdir: &std::path::Path,
@@ -105,7 +105,7 @@ fn clone_sidecar(
     }
 
     let gitdir = external_gitdir(&ctx.parent_repo, &nickname)?;
-    ensure_target_is_clonable(&nickname, &target, &gitdir)?;
+    ensure_target_is_cloneable(&nickname, &target, &gitdir)?;
 
     let snippet = sidecar_config_snippet(&nickname, repo, &mapping, standalone);
     let new_content = config_with_sidecar(existing.as_deref(), &snippet);
