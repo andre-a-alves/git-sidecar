@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use crate::config::{RepoContext, config_without_sidecar, parse_config};
 use crate::exclude::{exclude_entry, remove_mapping_exclusion};
+use crate::layout::{external_gitdir, is_valid_gitdir, relocate_gitdir_in, remove_external_dirs};
 use crate::paths::normalize_lexically;
 
 pub fn run(name: &str, delete: bool) -> ExitCode {
@@ -72,6 +73,8 @@ fn remove_sidecar(name: &str, delete: bool) -> Result<(), String> {
         }
     }
 
+    let gitdir = external_gitdir(&ctx.parent_repo, name)?;
+
     if delete {
         let dir = normalize_lexically(&ctx.parent_repo.join(&mapping));
         let parent = normalize_lexically(&ctx.parent_repo);
@@ -86,6 +89,26 @@ fn remove_sidecar(name: &str, delete: bool) -> Result<(), String> {
                 .map_err(|e| format!("failed to delete {}: {e}", dir.display()))?;
             println!("deleted {}", dir.display());
         }
+        if let Some(name_dir) = gitdir.parent() {
+            if name_dir.exists() {
+                std::fs::remove_dir_all(name_dir)
+                    .map_err(|e| format!("failed to delete {}: {e}", name_dir.display()))?;
+                println!("deleted {}", name_dir.display());
+                remove_external_dirs(&gitdir);
+            }
+        }
+        return Ok(());
+    }
+
+    // The directory stays on disk; if it was in the unified layout, move
+    // the git dir back inside so what remains is a normal standalone repo.
+    let dir = ctx.parent_repo.join(&mapping);
+    if dir.is_dir() && !dir.join(".git").exists() && is_valid_gitdir(&gitdir) {
+        relocate_gitdir_in(&dir, &gitdir)?;
+        println!(
+            "moved git dir back into {}; the directory is now a standalone repository",
+            dir.display()
+        );
     }
 
     Ok(())

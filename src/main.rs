@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod exclude;
 mod git;
+mod layout;
 mod paths;
 mod remote;
 
@@ -23,12 +24,17 @@ use crate::cli::{Cli, Command};
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::List { global } => commands::list::run(global),
-        Command::Sync { name } => commands::sync::run(name.as_deref()),
+        Command::Sync {
+            name,
+            standalone,
+            unify,
+        } => commands::sync::run(name.as_deref(), standalone, unify),
         Command::Clone {
             repo,
             directory,
             name,
-        } => commands::clone::run(&repo, directory, name),
+            standalone,
+        } => commands::clone::run(&repo, directory, name, standalone),
         Command::Remove { name, delete } => commands::remove::run(&name, delete),
         Command::Passthrough(args) => commands::passthrough::run(&args),
     }

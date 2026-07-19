@@ -1,20 +1,49 @@
-use std::process::{self, ExitCode};
+use std::process::ExitCode;
 
-use crate::commands::sync::{SyncAction, sync_action};
+use crate::commands::sync::clone_standalone;
 use crate::config::{
     RESERVED_NICKNAMES, RepoContext, config_with_sidecar, parse_config, sidecar_config_snippet,
 };
 use crate::exclude::{ensure_mappings_excluded, exclude_entry};
+use crate::layout::{DiskState, clone_unified, disk_state, external_gitdir};
 use crate::paths::relative_mapping;
 use crate::remote::repo_name_from_url;
 
-pub fn run(repo: &str, directory: Option<String>, name: Option<String>) -> ExitCode {
-    match clone_sidecar(repo, directory, name) {
+pub fn run(
+    repo: &str,
+    directory: Option<String>,
+    name: Option<String>,
+    standalone: bool,
+) -> ExitCode {
+    match clone_sidecar(repo, directory, name, standalone) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("git-sidecar: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn ensure_target_is_clonable(
+    nickname: &str,
+    target: &std::path::Path,
+    gitdir: &std::path::Path,
+) -> Result<(), String> {
+    match disk_state(target, gitdir) {
+        DiskState::Missing => Ok(()),
+        DiskState::Standalone | DiskState::Unified => Err(format!(
+            "{} already contains a git repository",
+            target.display()
+        )),
+        DiskState::MissingWorktree => Err(format!(
+            "a leftover git dir for '{nickname}' already exists at {}; remove it first",
+            gitdir.display()
+        )),
+        DiskState::NotARepo => Err(format!("{} exists and is not empty", target.display())),
+        DiskState::NotADirectory => Err(format!(
+            "{} exists and is not a directory",
+            target.display()
+        )),
     }
 }
 
@@ -25,6 +54,7 @@ fn clone_sidecar(
     repo: &str,
     directory: Option<String>,
     name: Option<String>,
+    standalone: bool,
 ) -> Result<(), String> {
     let ctx = RepoContext::discover()?;
 
@@ -74,37 +104,18 @@ fn clone_sidecar(
         }
     }
 
-    match sync_action(&target) {
-        SyncAction::Clone => {}
-        SyncAction::AlreadyPresent => {
-            return Err(format!(
-                "{} already contains a git repository",
-                target.display()
-            ));
-        }
-        SyncAction::NotARepo => {
-            return Err(format!("{} exists and is not empty", target.display()));
-        }
-        SyncAction::NotADirectory => {
-            return Err(format!(
-                "{} exists and is not a directory",
-                target.display()
-            ));
-        }
-    }
+    let gitdir = external_gitdir(&ctx.parent_repo, &nickname)?;
+    ensure_target_is_clonable(&nickname, &target, &gitdir)?;
 
-    let snippet = sidecar_config_snippet(&nickname, repo, &mapping);
+    let snippet = sidecar_config_snippet(&nickname, repo, &mapping, standalone);
     let new_content = config_with_sidecar(existing.as_deref(), &snippet);
     parse_config(&new_content).map_err(|e| format!("refusing to write an invalid config: {e}"))?;
 
     println!("{nickname}: cloning {repo} into {mapping}");
-    let status = process::Command::new("git")
-        .args(["clone", repo])
-        .arg(&target)
-        .status()
-        .map_err(|e| format!("failed to run git clone: {e}"))?;
-    if !status.success() {
-        return Err("git clone failed".to_string());
+    if standalone {
+        clone_standalone(repo, &target)?;
+    } else {
+        clone_unified(repo, &target, &gitdir)?;
     }
 
     if let Some(config_dir) = ctx.config_path.parent() {

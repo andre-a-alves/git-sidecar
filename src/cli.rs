@@ -20,10 +20,20 @@ pub enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Clone any configured sidecars that are not present
+    /// Clone any configured sidecars that are not present, and move
+    /// old-layout git dirs to the unified external location
     Sync {
         /// Sync only this sidecar
         name: Option<String>,
+        /// Mark this sidecar as standalone (its own `.git` inside the
+        /// mapping directory, untouched by the parent) and move its git
+        /// dir back in if needed; requires a sidecar name
+        #[arg(long, conflicts_with = "unify")]
+        standalone: bool,
+        /// Move a standalone sidecar back to the unified layout and clear
+        /// its standalone marking; requires a sidecar name
+        #[arg(long)]
+        unify: bool,
     },
     /// Clone a repo and register it as a sidecar of this repo
     Clone {
@@ -35,6 +45,10 @@ pub enum Command {
         /// Nickname for the sidecar (defaults to the repository name)
         #[arg(long)]
         name: Option<String>,
+        /// Keep the sidecar's `.git` inside the mapping directory
+        /// (traditional layout) instead of the unified external git dir
+        #[arg(long)]
+        standalone: bool,
     },
     /// Remove a sidecar from the config and exclude file
     #[command(alias = "rm")]
@@ -79,11 +93,39 @@ mod tests {
 
     #[test]
     fn sync_takes_an_optional_name() {
-        assert!(matches!(parse(&["sync"]), Ok(Command::Sync { name: None })));
+        assert!(matches!(
+            parse(&["sync"]),
+            Ok(Command::Sync { name: None, .. })
+        ));
         assert!(
-            matches!(parse(&["sync", "cardlet"]), Ok(Command::Sync { name: Some(n) }) if n == "cardlet")
+            matches!(parse(&["sync", "cardlet"]), Ok(Command::Sync { name: Some(n), .. }) if n == "cardlet")
         );
         assert!(parse(&["sync", "a", "b"]).is_err());
+    }
+
+    #[test]
+    fn sync_parses_standalone_and_unify_flags() {
+        assert!(matches!(
+            parse(&["sync", "cardlet", "--standalone"]),
+            Ok(Command::Sync {
+                standalone: true,
+                unify: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(&["sync", "cardlet", "--unify"]),
+            Ok(Command::Sync {
+                standalone: false,
+                unify: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn sync_rejects_standalone_together_with_unify() {
+        assert!(parse(&["sync", "cardlet", "--standalone", "--unify"]).is_err());
     }
 
     #[test]
@@ -92,6 +134,7 @@ mod tests {
             repo,
             directory,
             name,
+            standalone,
         }) = parse(&["clone", "url", ".vendor/fb", "--name", "fb"])
         else {
             panic!("expected clone command");
@@ -100,11 +143,19 @@ mod tests {
         assert_eq!(repo, "url");
         assert_eq!(directory.as_deref(), Some(".vendor/fb"));
         assert_eq!(name.as_deref(), Some("fb"));
+        assert!(!standalone);
 
         assert!(matches!(
             parse(&["clone", "url", "--name=fb"]),
             Ok(Command::Clone {
                 directory: None,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(&["clone", "url", "--standalone"]),
+            Ok(Command::Clone {
+                standalone: true,
                 ..
             })
         ));
