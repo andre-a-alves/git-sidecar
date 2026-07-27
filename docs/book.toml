@@ -1,0 +1,10 @@
+[book]
+title = "git-sidecar"
+description = "Run git commands against sidecar repositories that live inside your working directory."
+src = "src"
+
+[output.html]
+site-url = "https://gitsidecar.dev/"
+git-repository-url = "https://github.com/andre-a-alves/git-sidecar"
+edit-url-template = "https://github.com/andre-a-alves/git-sidecar/edit/main/docs/{path}"
+additional-css = ["theme/custom.css"]

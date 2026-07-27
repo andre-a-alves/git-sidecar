@@ -1,0 +1,26 @@
+/* Branding: centered logo with light/dark variants swapped per mdbook theme. */
+
+.sidecar-logo {
+    display: block;
+    width: 160px;
+    max-width: 40%;
+    margin: 1rem auto 2rem;
+}
+
+/* The light-glyph logo (for dark themes) is hidden by default. */
+.logo-on-dark {
+    display: none;
+}
+
+/* mdbook's dark themes: coal, navy, ayu. */
+html.coal .logo-on-light,
+html.navy .logo-on-light,
+html.ayu .logo-on-light {
+    display: none;
+}
+
+html.coal .logo-on-dark,
+html.navy .logo-on-dark,
+html.ayu .logo-on-dark {
+    display: block;
+}
