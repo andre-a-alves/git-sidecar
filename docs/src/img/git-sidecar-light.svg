@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="714" height="714" viewBox="279 240 714 714">
+  <title>Git Sidecar logo</title>
+  <desc>An open white rounded rectangular outline with a blue rounded square in the lower right on a near-black background.</desc>
+  <defs>
+    <linearGradient id="whiteStroke" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F5F5F5"/>
+    </linearGradient>
+    <linearGradient id="blueFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#426DA9"/>
+      <stop offset="1" stop-color="#41679D"/>
+    </linearGradient>
+  </defs>
+<path
+    d="M 862 553
+       V 380
+       C 862 337.5 827.5 303 785 303
+       H 396
+       C 353.5 303 319 337.5 319 380
+       V 789
+       C 319 831.5 353.5 866 396 866
+       H 606"
+    fill="none"
+    stroke="url(#whiteStroke)"
+    stroke-width="39"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <rect
+    x="646"
+    y="594"
+    width="326"
+    height="320"
+    rx="48"
+    fill="url(#blueFill)"/>
+</svg>
